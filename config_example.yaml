@@ -1,0 +1,159 @@
+# 示例策略配置文件
+# 复制此文件为 config.yaml 并根据需要修改
+
+# 全局配置
+global:
+  symbol: "BTC-USDT"          # 交易对
+  timeframe: "1h"           # 时间框架
+  max_positions: 3           # 最大仓位数
+  max_daily_loss: 100.0     # 最大日亏损 (USDT)
+  risk_per_trade: 0.01      # 每笔交易风险比例
+  enable_monitoring: true     # 启用监控
+  enable_logging: true       # 启用日志
+
+# 策略配置
+strategies:
+  - name: "保守均线策略"
+    strategy_type: "ma_cross"
+    enabled: true
+    symbol: "BTC-USDT"
+    timeframe: "1h"
+    position_size: 0.005      # 仓位大小
+    max_positions: 1
+    stop_loss_pct: 0.015      # 止损 1.5%
+    take_profit_pct: 0.03     # 止盈 3%
+    risk_per_trade: 0.005     # 每笔交易风险 0.5%
+    parameters:
+      short_period: 20         # 短期均线周期
+      long_period: 50          # 长期均线周期
+      ma_type: "ema"           # 均线类型
+      confirmation_periods: 3    # 确认周期数
+
+  - name: "保守RSI策略"
+    strategy_type: "rsi"
+    enabled: true
+    symbol: "BTC-USDT"
+    timeframe: "1h"
+    position_size: 0.005
+    max_positions: 1
+    stop_loss_pct: 0.015
+    take_profit_pct: 0.03
+    risk_per_trade: 0.005
+    parameters:
+      period: 21               # RSI周期
+      overbought: 75          # 超买阈值
+      oversold: 25            # 超卖阈值
+      smoothing: 5            # 平滑因子
+      divergence_enabled: true # 启用背离检测
+
+  - name: "激进均线策略"
+    strategy_type: "ma_cross"
+    enabled: false           # 默认禁用
+    symbol: "BTC-USDT"
+    timeframe: "15m"
+    position_size: 0.02       # 仓位更大
+    max_positions: 2
+    stop_loss_pct: 0.03       # 止损 3%
+    take_profit_pct: 0.08     # 止盈 8%
+    risk_per_trade: 0.02      # 每笔交易风险 2%
+    parameters:
+      short_period: 5          # 更短的周期
+      long_period: 15
+      ma_type: "sma"
+      confirmation_periods: 1  # 更少的确认周期
+
+  - name: "网格交易策略"
+    strategy_type: "grid"
+    enabled: false
+    symbol: "BTC-USDT"
+    timeframe: "1h"
+    position_size: 0.01
+    max_positions: 5           # 网格可以有多层仓位
+    stop_loss_pct: 0.02
+    take_profit_pct: 0.04
+    risk_per_trade: 0.01
+    parameters:
+      grid_levels: 15          # 网格层数
+      grid_spacing: 0.008      # 网格间距 0.8%
+      grid_size: 0.001         # 每层网格大小
+      rebalance_threshold: 0.02  # 再平衡阈值
+
+  - name: "MACD策略"
+    strategy_type: "macd"
+    enabled: false
+    symbol: "BTC-USDT"
+    timeframe: "1h"
+    position_size: 0.01
+    max_positions: 1
+    stop_loss_pct: 0.02
+    take_profit_pct: 0.05
+    risk_per_trade: 0.01
+    parameters:
+      fast_period: 8           # 快速EMA周期
+      slow_period: 21          # 慢速EMA周期
+      signal_period: 5         # 信号线周期
+      histogram_threshold: 0.05 # 柱状图阈值
+
+  - name: "布林带策略"
+    strategy_type: "bollinger_bands"
+    enabled: false
+    symbol: "BTC-USDT"
+    timeframe: "1h"
+    position_size: 0.01
+    max_positions: 1
+    stop_loss_pct: 0.02
+    take_profit_pct: 0.05
+    risk_per_trade: 0.01
+    parameters:
+      period: 20               # 布林带周期
+      std_dev: 2.5             # 标准差倍数
+      band_width_threshold: 0.02 # 带宽阈值
+
+  - name: "动量策略"
+    strategy_type: "momentum"
+    enabled: false
+    symbol: "BTC-USDT"
+    timeframe: "1h"
+    position_size: 0.01
+    max_positions: 1
+    stop_loss_pct: 0.02
+    take_profit_pct: 0.05
+    risk_per_trade: 0.01
+    parameters:
+      period: 10               # 动量周期
+      momentum_threshold: 0.5  # 动量阈值
+      volume_confirmation: true # 成交量确认
+      volume_ratio: 1.2        # 成交量比率阈值
+
+# 风险管理配置
+risk_management:
+  max_daily_loss: 100.0      # 最大日亏损
+  max_position_ratio: 0.3      # 最大仓位比例
+  max_drawdown: 0.2          # 最大回撤
+  var_threshold: 0.05         # VaR阈值
+  correlation_limit: 0.8     # 策略间相关性限制
+
+# 多币种配置
+multi_symbol:
+  enabled: false              # 是否启用多币种
+  symbols:                    # 交易对列表
+    - "BTC-USDT"
+    - "ETH-USDT"
+    - "LTC-USDT"
+  allocation:                 # 资金分配
+    BTC-USDT: 0.5             # 50% 资金分配给BTC
+    ETH-USDT: 0.3             # 30% 资金分配给ETH
+    LTC-USDT: 0.2             # 20% 资金分配给LTC
+
+# 高级配置
+advanced:
+  enable_correlation_filter: true    # 启用相关性过滤
+  enable_volatility_filter: true     # 启用波动性过滤
+  volatility_threshold: 0.02         # 波动性阈值
+  enable_news_filter: false          # 启用新闻过滤
+  news_keywords: ["crash", "drop", "fall"] # 新闻关键词过滤
+  enable_market_hours: true          # 启用市场交易时间过滤
+  market_hours:                      # 市场交易时间
+    start: "09:00"
+    end: "17:00"
+    timezone: "UTC"

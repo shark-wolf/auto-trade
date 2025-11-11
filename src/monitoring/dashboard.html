@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OKX自动交易平台 - 监控仪表板</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.15);
+        }
+
+        .card h3 {
+            color: #2c3e50;
+            margin-bottom: 20px;
+            font-size: 1.3rem;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #ecf0f1;
+        }
+
+        .metric:last-child {
+            border-bottom: none;
+        }
+
+        .metric-label {
+            font-weight: 600;
+            color: #34495e;
+        }
+
+        .metric-value {
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+
+        .positive {
+            color: #27ae60;
+        }
+
+        .negative {
+            color: #e74c3c;
+        }
+
+        .neutral {
+            color: #7f8c8d;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-online {
+            background-color: #27ae60;
+            animation: pulse 2s infinite;
+        }
+
+        .status-offline {
+            background-color: #e74c3c;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-top: 20px;
+        }
+
+        .events-log {
+            background: #2c3e50;
+            color: #ecf0f1;
+            border-radius: 10px;
+            padding: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+        }
+
+        .event-item {
+            margin-bottom: 8px;
+            padding: 8px;
+            border-radius: 5px;
+            border-left: 4px solid #3498db;
+        }
+
+        .event-info {
+            background: rgba(52, 152, 219, 0.1);
+            border-left-color: #3498db;
+        }
+
+        .event-warning {
+            background: rgba(241, 196, 15, 0.1);
+            border-left-color: #f1c40f;
+        }
+
+        .event-error {
+            background: rgba(231, 76, 60, 0.1);
+            border-left-color: #e74c3c;
+        }
+
+        .event-success {
+            background: rgba(39, 174, 96, 0.1);
+            border-left-color: #27ae60;
+        }
+
+        .connection-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: white;
+            padding: 15px 20px;
+            border-radius: 25px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .btn {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: background 0.3s ease;
+        }
+
+        .btn:hover {
+            background: #2980b9;
+        }
+
+        .btn-danger {
+            background: #e74c3c;
+        }
+
+        .btn-danger:hover {
+            background: #c0392b;
+        }
+
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .alert {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .alert-danger {
+            background: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+
+        @media (max-width: 768px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .connection-status {
+                position: relative;
+                top: auto;
+                right: auto;
+                margin-bottom: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="connection-status" id="connectionStatus">
+        <span class="status-indicator status-offline" id="statusIndicator"></span>
+        <span id="connectionText">连接中...</span>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>🚀 OKX自动交易平台</h1>
+            <p>实时监控仪表板 - 交易状态一目了然</p>
+        </div>
+
+        <div class="controls">
+            <button class="btn" onclick="refreshData()">🔄 刷新数据</button>
+            <button class="btn btn-danger" onclick="clearLogs()">🗑️ 清空日志</button>
+        </div>
+
+        <div class="dashboard">
+            <!-- 系统状态 -->
+            <div class="card">
+                <h3>📊 系统状态</h3>
+                <div class="metric">
+                    <span class="metric-label">系统运行时间</span>
+                    <span class="metric-value neutral" id="uptime">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">CPU使用率</span>
+                    <span class="metric-value" id="cpuUsage">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">内存使用率</span>
+                    <span class="metric-value" id="memoryUsage">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">活跃连接数</span>
+                    <span class="metric-value neutral" id="activeConnections">--</span>
+                </div>
+            </div>
+
+            <!-- 交易统计 -->
+            <div class="card">
+                <h3>📈 交易统计</h3>
+                <div class="metric">
+                    <span class="metric-label">总交易次数</span>
+                    <span class="metric-value neutral" id="totalTrades">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">胜率</span>
+                    <span class="metric-value" id="winRate">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">总盈亏</span>
+                    <span class="metric-value" id="totalPnL">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">夏普比率</span>
+                    <span class="metric-value neutral" id="sharpeRatio">--</span>
+                </div>
+            </div>
+
+            <!-- 风险指标 -->
+            <div class="card">
+                <h3>⚠️ 风险指标</h3>
+                <div class="metric">
+                    <span class="metric-label">当前风险敞口</span>
+                    <span class="metric-value" id="riskExposure">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">最大回撤</span>
+                    <span class="metric-value negative" id="maxDrawdown">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">风险/收益比</span>
+                    <span class="metric-value neutral" id="riskRewardRatio">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">日亏损限额</span>
+                    <span class="metric-value" id="dailyLossLimit">--</span>
+                </div>
+            </div>
+
+            <!-- 策略状态 -->
+            <div class="card">
+                <h3>🎯 策略状态</h3>
+                <div class="metric">
+                    <span class="metric-label">活跃策略数</span>
+                    <span class="metric-value neutral" id="activeStrategies">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">今日信号数</span>
+                    <span class="metric-value neutral" id="signalsToday">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">执行订单数</span>
+                    <span class="metric-value neutral" id="executedOrders">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">持仓数量</span>
+                    <span class="metric-value neutral" id="openPositions">--</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 图表区域 -->
+        <div class="dashboard">
+            <div class="card">
+                <h3>📊 盈亏趋势图</h3>
+                <div class="chart-container">
+                    <canvas id="pnlChart"></canvas>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>📈 交易分布图</h3>
+                <div class="chart-container">
+                    <canvas id="tradeChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 事件日志 -->
+        <div class="card">
+            <h3>📝 事件日志</h3>
+            <div class="events-log" id="eventsLog">
+                <div class="event-item event-info">
+                    <strong>[系统]</strong> 正在连接监控系统...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class TradingDashboard {
+            constructor() {
+                this.socket = null;
+                this.charts = {};
+                this.eventCount = 0;
+                this.maxEvents = 100;
+                
+                this.initializeCharts();
+                this.connectWebSocket();
+                this.setupEventListeners();
+            }
+
+            connectWebSocket() {
+                try {
+                    // 使用原生WebSocket连接到服务器
+                    // 为避免在某些环境下 localhost 解析到 IPv6 导致连接异常，改用明确的 IPv4 地址
+                    this.socket = new WebSocket('ws://127.0.0.1:8765');
+
+                    this.socket.onopen = () => {
+                        this.updateConnectionStatus(true);
+                        this.logEvent('系统', 'WebSocket连接已建立', 'success');
+                    };
+
+                    this.socket.onclose = () => {
+                        this.updateConnectionStatus(false);
+                        this.logEvent('系统', 'WebSocket连接已断开', 'warning');
+                        // 尝试重新连接
+                        setTimeout(() => {
+                            this.logEvent('系统', '尝试重新连接...', 'info');
+                            this.connectWebSocket();
+                        }, 1000);
+                    };
+
+                    this.socket.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            // 服务器发送的是完整的仪表板数据，需要解析并更新各个组件
+                            if (data.system_status) {
+                                this.updateSystemStatus(data.system_status);
+                            }
+                            if (data.trading_metrics) {
+                                this.updateTradingMetrics(data.trading_metrics);
+                            }
+                            if (data.risk_metrics) {
+                                this.updateRiskMetrics(data.risk_metrics);
+                            }
+                            if (data.strategy_status) {
+                                this.updateStrategyStatus(data.strategy_status);
+                            }
+                            if (data.recent_events) {
+                                // 处理最近的事件
+                                data.recent_events.forEach(event => {
+                                    this.logEvent(event.source || '系统', event.message, event.level);
+                                });
+                            }
+                        } catch (error) {
+                            this.logEvent('错误', `解析数据失败: ${error.message}`, 'error');
+                        }
+                    };
+
+                    this.socket.onerror = (error) => {
+                        // 有些浏览器的错误对象不包含 message，这里统一记录连接错误
+                        this.logEvent('错误', `WebSocket错误: ${error && error.message ? error.message : '连接错误'}`, 'error');
+                        this.updateConnectionStatus(false);
+                    };
+
+                } catch (error) {
+                    this.logEvent('错误', `WebSocket连接失败: ${error.message}`, 'error');
+                    this.updateConnectionStatus(false);
+                }
+            }
+
+            updateConnectionStatus(connected) {
+                const indicator = document.getElementById('statusIndicator');
+                const text = document.getElementById('connectionText');
+                
+                if (connected) {
+                    indicator.className = 'status-indicator status-online';
+                    text.textContent = '已连接';
+                } else {
+                    indicator.className = 'status-indicator status-offline';
+                    text.textContent = '未连接';
+                }
+            }
+
+            updateSystemStatus(data) {
+                const uptime = Number(data.uptime ?? 0);
+                const cpuPercent = Number(data.cpu_percent ?? 0);
+                const memoryPercent = Number(data.memory_percent ?? 0);
+                const connections = Number(data.connections ?? 0);
+
+                document.getElementById('uptime').textContent = this.formatUptime(uptime);
+                document.getElementById('cpuUsage').textContent = `${cpuPercent.toFixed(1)}%`;
+                document.getElementById('memoryUsage').textContent = `${memoryPercent.toFixed(1)}%`;
+                document.getElementById('activeConnections').textContent = connections;
+
+                // 更新CPU和内存颜色
+                const cpuElement = document.getElementById('cpuUsage');
+                const memoryElement = document.getElementById('memoryUsage');
+                
+                cpuElement.className = `metric-value ${cpuPercent > 80 ? 'negative' : cpuPercent > 60 ? 'neutral' : 'positive'}`;
+                memoryElement.className = `metric-value ${memoryPercent > 80 ? 'negative' : memoryPercent > 60 ? 'neutral' : 'positive'}`;
+            }
+
+            updateTradingMetrics(data) {
+                document.getElementById('totalTrades').textContent = data.total_trades;
+                document.getElementById('winRate').textContent = `${data.win_rate.toFixed(1)}%`;
+                document.getElementById('totalPnL').textContent = this.formatCurrency(data.total_pnl);
+                document.getElementById('sharpeRatio').textContent = data.sharpe_ratio.toFixed(2);
+
+                // 更新盈亏颜色
+                const pnlElement = document.getElementById('totalPnL');
+                pnlElement.className = `metric-value ${data.total_pnl >= 0 ? 'positive' : 'negative'}`;
+
+                // 更新图表
+                this.updateCharts(data);
+            }
+
+            updateRiskMetrics(data) {
+                document.getElementById('riskExposure').textContent = `${(data.risk_exposure * 100).toFixed(1)}%`;
+                document.getElementById('maxDrawdown').textContent = `${(data.max_drawdown * 100).toFixed(1)}%`;
+                document.getElementById('riskRewardRatio').textContent = data.risk_reward_ratio.toFixed(2);
+                document.getElementById('dailyLossLimit').textContent = this.formatCurrency(data.daily_loss_limit);
+
+                // 更新风险敞口颜色
+                const exposureElement = document.getElementById('riskExposure');
+                const drawdownElement = document.getElementById('maxDrawdown');
+                
+                exposureElement.className = `metric-value ${data.risk_exposure > 0.5 ? 'negative' : data.risk_exposure > 0.3 ? 'neutral' : 'positive'}`;
+                drawdownElement.className = `metric-value negative`;
+            }
+
+            updateStrategyStatus(data) {
+                document.getElementById('activeStrategies').textContent = data.active_strategies;
+                document.getElementById('signalsToday').textContent = data.signals_today;
+                document.getElementById('executedOrders').textContent = data.executed_orders;
+                document.getElementById('openPositions').textContent = data.open_positions;
+            }
+
+            initializeCharts() {
+                // 盈亏趋势图
+                const pnlCtx = document.getElementById('pnlChart').getContext('2d');
+                this.charts.pnl = new Chart(pnlCtx, {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [{
+                            label: '累计盈亏',
+                            data: [],
+                            borderColor: '#3498db',
+                            backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                            fill: true,
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'top'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: false,
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + value.toFixed(2);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+
+                // 交易分布图
+                const tradeCtx = document.getElementById('tradeChart').getContext('2d');
+                this.charts.trade = new Chart(tradeCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['盈利', '亏损'],
+                        datasets: [{
+                            data: [0, 0],
+                            backgroundColor: ['#27ae60', '#e74c3c'],
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'bottom'
+                            }
+                        }
+                    }
+                });
+            }
+
+            updateCharts(data) {
+                // 更新盈亏趋势图
+                if (data.pnl_history && data.pnl_history.length > 0) {
+                    this.charts.pnl.data.labels = data.pnl_history.map((_, index) => index + 1);
+                    this.charts.pnl.data.datasets[0].data = data.pnl_history;
+                    this.charts.pnl.update();
+                }
+
+                // 更新交易分布图
+                if (data.winning_trades !== undefined && data.losing_trades !== undefined) {
+                    this.charts.trade.data.datasets[0].data = [data.winning_trades, data.losing_trades];
+                    this.charts.trade.update();
+                }
+            }
+
+            logEvent(source, message, level = 'info') {
+                const logContainer = document.getElementById('eventsLog');
+                const timestamp = new Date().toLocaleTimeString();
+                
+                const eventItem = document.createElement('div');
+                eventItem.className = `event-item event-${level}`;
+                eventItem.innerHTML = `<strong>[${timestamp}] ${source}:</strong> ${message}`;
+                
+                // 添加新事件到顶部
+                logContainer.insertBefore(eventItem, logContainer.firstChild);
+                
+                // 限制事件数量
+                this.eventCount++;
+                if (this.eventCount > this.maxEvents) {
+                    logContainer.removeChild(logContainer.lastChild);
+                }
+            }
+
+            formatCurrency(value) {
+                return new Intl.NumberFormat('zh-CN', {
+                    style: 'currency',
+                    currency: 'USD',
+                    minimumFractionDigits: 2
+                }).format(value);
+            }
+
+            formatUptime(seconds) {
+                const hours = Math.floor(seconds / 3600);
+                const minutes = Math.floor((seconds % 3600) / 60);
+                const secs = seconds % 60;
+                
+                if (hours > 0) {
+                    return `${hours}小时 ${minutes}分钟`;
+                } else if (minutes > 0) {
+                    return `${minutes}分钟 ${secs}秒`;
+                } else {
+                    return `${secs}秒`;
+                }
+            }
+
+            setupEventListeners() {
+                // 页面可见性变化时的处理
+                document.addEventListener('visibilitychange', () => {
+                    if (document.hidden) {
+                        this.logEvent('系统', '页面切换到后台', 'info');
+                    } else {
+                        this.logEvent('系统', '页面切换到前台', 'info');
+                    }
+                });
+
+                // 窗口关闭时的清理（原生WebSocket使用 close，而非 Socket.IO 的 disconnect）
+                window.addEventListener('beforeunload', () => {
+                    if (this.socket && this.socket.readyState !== WebSocket.CLOSED) {
+                        try { this.socket.close(); } catch (e) {}
+                    }
+                });
+            }
+        }
+
+        // 全局函数
+        function refreshData() {
+            dashboard.logEvent('系统', '手动刷新数据', 'info');
+            // 原生WebSocket不支持 emit/connected，使用 readyState 判断连接状态
+            if (dashboard.socket && dashboard.socket.readyState === WebSocket.OPEN) {
+                // 当前服务端为主动推送，无需客户端请求；这里仅记录提示
+                dashboard.logEvent('系统', '连接正常，等待服务端推送', 'info');
+            } else {
+                dashboard.logEvent('系统', '未连接，正在尝试重新连接...', 'warning');
+                // 触发重连
+                dashboard.connectWebSocket();
+            }
+        }
+
+        function clearLogs() {
+            const logContainer = document.getElementById('eventsLog');
+            logContainer.innerHTML = '<div class="event-item event-info"><strong>[系统]</strong> 日志已清空</div>';
+            dashboard.eventCount = 1;
+        }
+
+        // 初始化仪表板
+        let dashboard;
+        document.addEventListener('DOMContentLoaded', function() {
+            dashboard = new TradingDashboard();
+        });
+
+        // 错误处理
+        window.addEventListener('error', function(e) {
+            if (dashboard) {
+                dashboard.logEvent('错误', `页面错误: ${e.message}`, 'error');
+            }
+        });
+    </script>
+</body>
+</html>
