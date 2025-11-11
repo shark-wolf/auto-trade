@@ -18,8 +18,8 @@ current_dir = Path(__file__).parent
 src_dir = current_dir / "src"
 sys.path.insert(0, str(src_dir))
 
-from api import OKXClient, OKXWebSocketClient, MarketDataHandler, OKXConfig
-from strategies import StrategyManager, MovingAverageCrossStrategy, RSIStrategy, GridTradingStrategy, MarketData
+from api import OKXClient, OKXWebSocketClient, MarketDataHandler, OKXConfig, CCXTClient
+from strategies import StrategyManager, MovingAverageCrossStrategy, RSIStrategy, GridTradingStrategy, MarketData, Signal, SignalType
 from risk import RiskManager, PortfolioManager
 from execution import OrderManager
 from monitoring import MonitoringService
@@ -50,6 +50,8 @@ class TradingBot:
         # 运行状态
         self.is_running = False
         self.tasks = []
+        # 分钟边界对齐：记录最近已处理的K线时间戳（毫秒）
+        self.last_processed_candle_ts = None
         
         # 设置日志
         self._setup_logging()
@@ -60,8 +62,17 @@ class TradingBot:
         """加载配置"""
         from dotenv import load_dotenv
         
-        # 加载环境变量
-        load_dotenv(self.config_path)
+        # 加载 .env 环境变量（优先使用项目根目录下的 .env）
+        try:
+            env_path = Path(".env")
+            if env_path.exists():
+                load_dotenv(env_path)
+            else:
+                # 回退到默认查找（系统环境或父目录）
+                load_dotenv()
+        except Exception:
+            # 任何异常情况下继续执行，保持默认环境
+            load_dotenv()
         
         config = {
             # API配置
@@ -99,10 +110,18 @@ class TradingBot:
             # 监控配置
             "enable_monitoring": os.getenv("ENABLE_MONITORING", "true").lower() == "true",
             "monitoring_interval": int(os.getenv("MONITORING_INTERVAL", "60")),
+            # 监控WebSocket服务配置（用于前端仪表板连接）
+            "ws_host": os.getenv("WS_HOST", "127.0.0.1"),
+            "ws_port": int(os.getenv("WS_PORT", "8765")),
+            "enable_websocket": os.getenv("ENABLE_WEBSOCKET", "true").lower() == "true",
             
             # 数据库配置
             "database_url": os.getenv("DATABASE_URL", "")
         }
+
+        # 后端选择与调试开关
+        config["api_backend"] = os.getenv("API_BACKEND", "okx").lower()  # okx 或 ccxt
+        config["api_debug"] = os.getenv("API_DEBUG", "false").lower() == "true"
         
         # 验证必要配置
         required_keys = ["api_key", "api_secret", "passphrase"]
@@ -150,14 +169,23 @@ class TradingBot:
         try:
             logger.info("开始初始化交易机器人组件...")
             
-            # 初始化API客户端
-            okx_config = OKXConfig(
-                api_key=self.config["api_key"],
-                secret_key=self.config["api_secret"],
-                passphrase=self.config["passphrase"],
-                testnet=self.config["testnet"]
-            )
-            self.api_client = OKXClient(okx_config)
+            # 初始化API客户端（支持 CCXT 切换）
+            if self.config.get("api_backend") == "ccxt":
+                logger.info("使用 CCXT 作为交易后端")
+                self.api_client = CCXTClient(
+                    api_key=self.config["api_key"],
+                    secret=self.config["api_secret"],
+                    passphrase=self.config["passphrase"],
+                    testnet=self.config["testnet"]
+                )
+            else:
+                okx_config = OKXConfig(
+                    api_key=self.config["api_key"],
+                    secret_key=self.config["api_secret"],
+                    passphrase=self.config["passphrase"],
+                    testnet=self.config["testnet"]
+                )
+                self.api_client = OKXClient(okx_config)
             
             # 测试API连接
             await self._test_api_connection()
@@ -201,6 +229,16 @@ class TradingBot:
             
             # 初始化监控服务
             self.monitoring_service = MonitoringService(self.config)
+            # 注册监控面板控制回调
+            try:
+                self.monitoring_service.register_control_callback(self._on_monitoring_control)
+            except Exception:
+                pass
+            # 注册监控面板参数更新回调
+            try:
+                self.monitoring_service.register_params_callback(self._on_monitoring_params_update)
+            except Exception:
+                pass
             
             logger.info("交易机器人组件初始化完成")
             
@@ -268,34 +306,57 @@ class TradingBot:
             self.strategy_manager.register_strategy(grid_strategy)
             logger.info("已注册网格交易策略")
 
-        # 新增：根据配置启用KDJ与MACD策略
-        if "kdj" in enabled_strategies:
-            from strategies.kdj_strategy import KDJStrategy
-            kdj_config = {
-                "period": self.config.get("kdj_period", 9),
-                "oversold": 20,
-                "overbought": 80,
+        # 新增：根据配置启用合并策略或单独策略
+        if "kdj_macd" in enabled_strategies:
+            # 优先注册合并策略
+            from strategies.kdj_macd_strategy import KDJMACDStrategy
+            composite_config = {
+                "kdj": {
+                    "period": self.config.get("kdj_period", 9),
+                    "oversold": 20,
+                    "overbought": 80,
+                },
+                "macd": {
+                    "fast": 5,
+                    "slow": 13,
+                    "signal": 4,
+                },
                 "stop_loss": 0.02,
                 "take_profit": 0.04,
-                "min_confidence": 0.6,
+                "min_confidence": 0.55,
             }
-            kdj_strategy = KDJStrategy(kdj_config)
-            self.strategy_manager.register_strategy(kdj_strategy)
-            logger.info("已注册KDJ策略")
+            cm_strategy = KDJMACDStrategy(composite_config)
+            self.strategy_manager.register_strategy(cm_strategy)
+            logger.info("已注册KDJ+MACD合并策略")
+        else:
+            # 兼容旧配置：分别注册KDJ与MACD
+            if "kdj" in enabled_strategies:
+                from strategies.kdj_strategy import KDJStrategy
+                kdj_config = {
+                    "period": self.config.get("kdj_period", 9),
+                    "oversold": 20,
+                    "overbought": 80,
+                    "stop_loss": 0.02,
+                    "take_profit": 0.04,
+                    "min_confidence": 0.55,
+                }
+                kdj_strategy = KDJStrategy(kdj_config)
+                self.strategy_manager.register_strategy(kdj_strategy)
+                logger.info("已注册KDJ策略")
 
-        if "macd" in enabled_strategies:
-            from strategies.macd_strategy import MACDStrategy
-            macd_config = {
-                "fast": 12,
-                "slow": 26,
-                "signal": 9,
-                "stop_loss": 0.02,
-                "take_profit": 0.04,
-                "min_confidence": 0.6,
-            }
-            macd_strategy = MACDStrategy(macd_config)
-            self.strategy_manager.register_strategy(macd_strategy)
-            logger.info("已注册MACD策略")
+            if "macd" in enabled_strategies:
+                from strategies.macd_strategy import MACDStrategy
+                macd_config = {
+                    "fast": 5,
+                    "slow": 13,
+                    "signal": 4,
+                    "stop_loss": 0.02,
+                    "take_profit": 0.04,
+                    "min_confidence": 0.55,
+                }
+                macd_strategy = MACDStrategy(macd_config)
+                self.strategy_manager.register_strategy(macd_strategy)
+                logger.info("已注册MACD策略")
     
     async def start(self):
         """启动交易机器人"""
@@ -315,10 +376,11 @@ class TradingBot:
             
             # 订阅市场数据
             symbol = self.config["symbol"]
-            await self.ws_client.subscribe_ticker(symbol, self.market_data_handler.handle_ticker)
+            # 行情订阅：更新缓存并同步到投资组合现价
+            await self.ws_client.subscribe_ticker(symbol, self._on_ticker)
             await self.ws_client.subscribe_orderbook(symbol, self.market_data_handler.handle_orderbook)
-            # 订阅1分钟K线并解析为OHLC
-            await self.ws_client.subscribe_candles(symbol, "1m", lambda d: asyncio.create_task(self.market_data_handler.handle_candles_ws(symbol, d)))
+            # 订阅1分钟K线：在K线确认收盘时触发策略分析
+            await self.ws_client.subscribe_candles(symbol, "1m", self._on_candles)
             
             # 启动策略管理器
             await self.strategy_manager.start()
@@ -340,6 +402,17 @@ class TradingBot:
             self.tasks.append(trading_task)
             
             logger.info("交易机器人启动完成")
+            # 推送开启事件到监控
+            try:
+                if self.monitoring_service:
+                    self.monitoring_service.log_event(
+                        event_type="system",
+                        level="success",
+                        message="自动交易已开启",
+                        data={"source": "bot", "symbol": self.config.get("symbol")}
+                    )
+            except Exception:
+                pass
             
         except Exception as e:
             logger.error(f"启动失败: {str(e)}")
@@ -361,9 +434,9 @@ class TradingBot:
             # 停止订单管理器
             await self.order_manager.stop()
             
-            # 停止监控服务
-            if hasattr(self, 'monitoring_service'):
-                await self.monitoring_service.stop()
+            # 保持监控服务运行，以便从仪表板重新开启交易
+            # if hasattr(self, 'monitoring_service'):
+            #     await self.monitoring_service.stop()
             
             # 关闭WebSocket连接
             await self.ws_client.disconnect()
@@ -377,10 +450,21 @@ class TradingBot:
                 await asyncio.gather(*self.tasks, return_exceptions=True)
             
             logger.info("交易机器人已停止")
+            # 推送关闭事件到监控
+            try:
+                if self.monitoring_service:
+                    self.monitoring_service.log_event(
+                        event_type="system",
+                        level="warning",
+                        message="自动交易已关闭",
+                        data={"source": "bot", "symbol": self.config.get("symbol")}
+                    )
+            except Exception:
+                pass
             
         except Exception as e:
             logger.error(f"停止过程中出错: {str(e)}")
-    
+
     async def _handle_market_data(self, message: Dict[str, Any]):
         """处理市场数据"""
         try:
@@ -394,6 +478,68 @@ class TradingBot:
                 
         except Exception as e:
             logger.error(f"处理市场数据失败: {str(e)}")
+
+    async def _on_ticker(self, data: list):
+        """行情回调：更新缓存并同步 PortfolioManager 现价"""
+        try:
+            # 更新行情缓存
+            await self.market_data_handler.handle_ticker(data)
+            # 同步现价到投资组合
+            for t in data:
+                inst_id = t.get("instId")
+                last = t.get("last")
+                try:
+                    price = float(last) if last is not None else None
+                except Exception:
+                    price = None
+                if inst_id and price is not None and price > 0:
+                    # 仅同步当前交易对，避免无关数据污染
+                    if inst_id == self.config.get("symbol") and hasattr(self, 'portfolio_manager') and self.portfolio_manager:
+                        try:
+                            self.portfolio_manager.update_price(inst_id, price)
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.error(f"处理行情回调失败: {str(e)}")
+
+    async def _on_candles(self, data: list):
+        """K线回调：在K线收盘确认时触发分析"""
+        try:
+            symbol = self.config.get("symbol")
+            # 更新K线缓存
+            await self.market_data_handler.handle_candles_ws(symbol, data)
+            # 读取最新K线
+            candle = self.market_data_handler.get_latest_candle(symbol)
+            if not candle:
+                return
+
+            ts = candle.get("ts")
+            confirm = candle.get("confirm", False)
+            if ts is None or not confirm:
+                return
+            # 去重：只在新的收盘K线触发
+            if self.last_processed_candle_ts == ts:
+                return
+            self.last_processed_candle_ts = ts
+
+            last_price = self.market_data_handler.get_latest_price(symbol) or candle.get("close", 0.0)
+            market_data = MarketData(
+                symbol=symbol,
+                timestamp=datetime.now(),
+                open=candle.get("open", 0.0),
+                high=candle.get("high", 0.0),
+                low=candle.get("low", 0.0),
+                close=candle.get("close", 0.0),
+                volume=candle.get("volume", 0.0),
+                bid=last_price,
+                ask=last_price
+            )
+
+            signals = await self.strategy_manager.analyze(market_data)
+            await self._process_signals(signals)
+            logger.info(f"分钟收盘分析完成: ts={ts}, 信号数={len(signals)}")
+        except Exception as e:
+            logger.error(f"处理K线回调失败: {str(e)}")
     
     async def _trading_loop(self):
         """主交易循环"""
@@ -404,6 +550,13 @@ class TradingBot:
                 # 使用最新的1分钟K线驱动策略分析
                 candle = self.market_data_handler.get_latest_candle(self.config["symbol"])
                 if candle:
+                    ts = candle.get("ts")
+                    confirm = candle.get("confirm", False)
+                    # 作为回退机制：仅在确认收盘且未处理过的K线时分析
+                    if ts is None or not confirm or self.last_processed_candle_ts == ts:
+                        await asyncio.sleep(5)
+                        continue
+                    self.last_processed_candle_ts = ts
                     last_price = self.market_data_handler.get_latest_price(self.config["symbol"]) or candle.get("close", 0.0)
                     market_data = MarketData(
                         symbol=self.config["symbol"],
@@ -421,7 +574,7 @@ class TradingBot:
                     await self._process_signals(signals)
                 
                 # 等待下一个循环
-                await asyncio.sleep(60)  # 每分钟检查一次
+                await asyncio.sleep(5)  # 更快的回退轮询，避免错过收盘触发
                 
             except asyncio.CancelledError:
                 break
@@ -430,28 +583,97 @@ class TradingBot:
                 await asyncio.sleep(60)  # 出错后等待1分钟
     
     async def _process_signals(self, signals: list):
-        """处理交易信号"""
-        for signal in signals:
-            try:
-                symbol = signal.symbol
-                signal_type = signal.signal_type
-                confidence = signal.confidence
-                
-                logger.info(f"收到交易信号: {symbol} {signal_type.value} 置信度: {confidence}")
-                
+        """处理交易信号：仅在KDJ与MACD共振时执行下单；止损/止盈触发不受共振限制"""
+        try:
+            if not signals:
+                return
+
+            # 止损/止盈触发优先处理（不要求共振）
+            stop_signals = [s for s in signals if s.metadata.get("stop_trigger")]
+            for s in stop_signals:
+                try:
+                    logger.info(f"处理止损/止盈信号: {s.symbol} {s.signal_type.value} 置信度: {s.confidence}")
+                    risk_check = self.risk_manager.check_trade_signal(s)
+                    if not risk_check["allowed"]:
+                        logger.warning(f"止损/止盈信号被风险管理器拒绝: {risk_check['reason']}")
+                        continue
+                    order_id = await self._create_order_from_signal(s)
+                    if order_id:
+                        logger.info(f"止损/止盈订单创建成功: {order_id}")
+                except Exception as e:
+                    logger.error(f"处理止损/止盈信号失败: {str(e)}")
+
+            # 若存在合并策略（KDJ_MACD），其信号可直接用于下单
+            def _strategy_name(s):
+                return (s.metadata or {}).get("strategy_name", "")
+
+            composite_signals = [s for s in signals if _strategy_name(s) in ("KDJ_MACD", "KDJ+MACD") and s.signal_type != SignalType.HOLD]
+            for s in composite_signals:
+                try:
+                    risk_check = self.risk_manager.check_trade_signal(s)
+                    if not risk_check["allowed"]:
+                        logger.warning(f"合并策略信号被风险管理器拒绝: {risk_check['reason']}")
+                        continue
+                    order_id = await self._create_order_from_signal(s)
+                    if order_id:
+                        logger.info(f"合并策略订单创建成功: {order_id}")
+                except Exception as e:
+                    logger.error(f"处理合并策略信号失败: {str(e)}")
+
+            # 共振逻辑：当分别启用KDJ与MACD时，需同向才下单
+            kdj_signals = [s for s in signals if _strategy_name(s) == "KDJ" and s.signal_type != SignalType.HOLD]
+            macd_signals = [s for s in signals if _strategy_name(s) == "MACD" and s.signal_type != SignalType.HOLD]
+
+            if not kdj_signals or not macd_signals:
+                # 当合并策略已处理或缺少分策略信号时，直接返回
+                return
+
+            # 取最新各一个信号进行共振判断
+            kdj = kdj_signals[-1]
+            macd = macd_signals[-1]
+
+            if kdj.signal_type == macd.signal_type and kdj.signal_type != SignalType.HOLD:
+                side = kdj.signal_type.value
+                symbol = kdj.symbol
+                combined_conf = min(kdj.confidence, macd.confidence)
+
+                logger.info(f"检测到KDJ+MACD共振: {symbol} {side} 置信度(取最小): {combined_conf}")
+
+                # 以KDJ的价格为主，若缺失则用MACD价格
+                price = kdj.price or macd.price
+                metadata = {
+                    "strategy_name": "KDJ+MACD",
+                    "signal_id": f"KDJ+MACD-{int(datetime.now().timestamp())}",
+                    "current_price": price,
+                    "kdj": kdj.metadata,
+                    "macd": macd.metadata,
+                    "confidence": combined_conf,
+                }
+
+                consensus_signal = Signal(
+                    symbol=symbol,
+                    signal_type=kdj.signal_type,
+                    price=price,
+                    confidence=combined_conf,
+                    timestamp=datetime.now(),
+                    metadata=metadata,
+                )
+
                 # 风险检查
-                risk_check = self.risk_manager.check_trade_signal(signal)
+                risk_check = self.risk_manager.check_trade_signal(consensus_signal)
                 if not risk_check["allowed"]:
-                    logger.warning(f"信号被风险管理器拒绝: {risk_check['reason']}")
-                    continue
-                
+                    logger.warning(f"共振信号被风险管理器拒绝: {risk_check['reason']}")
+                    return
+
                 # 创建订单
-                order_id = await self._create_order_from_signal(signal)
+                order_id = await self._create_order_from_signal(consensus_signal)
                 if order_id:
-                    logger.info(f"成功创建订单: {order_id}")
-                    
-            except Exception as e:
-                logger.error(f"处理交易信号失败: {str(e)}")
+                    logger.info(f"共振订单创建成功: {order_id}")
+            else:
+                # 无需日志噪音，保持安静
+                pass
+        except Exception as e:
+            logger.error(f"处理交易信号失败: {str(e)}")
     
     async def _create_order_from_signal(self, signal) -> Optional[str]:
         """根据信号创建订单"""
@@ -468,7 +690,17 @@ class TradingBot:
                 return None
             
             # 确定订单类型和价格
-            current_price = signal.metadata.get("current_price", 0)
+            # 兼容策略输出的price以及管理器注入的current_price
+            current_price = 0
+            try:
+                current_price = float(signal.metadata.get("current_price", 0))
+            except Exception:
+                current_price = 0
+            if not current_price or current_price <= 0:
+                try:
+                    current_price = float(getattr(signal, "price", 0) or signal.metadata.get("price", 0))
+                except Exception:
+                    current_price = 0
             if current_price <= 0:
                 logger.error("无法获取当前价格")
                 return None
@@ -485,8 +717,8 @@ class TradingBot:
                 size=order_size,
                 price=None,
                 metadata={
-                    "signal_id": signal.signal_id,
-                    "strategy_name": signal.strategy_name,
+                    "signal_id": signal.metadata.get("signal_id"),
+                    "strategy_name": signal.metadata.get("strategy_name"),
                     "confidence": signal.confidence
                 }
             )
@@ -511,17 +743,108 @@ class TradingBot:
             try:
                 # 获取当前状态
                 status = await self.get_status()
-                
+
                 # 记录状态信息
                 logger.info(f"机器人状态: {json.dumps(status, indent=2, ensure_ascii=False)}")
+
+                # 推送资金与持仓到监控服务
+                try:
+                    if self.monitoring_service and 'portfolio' in status:
+                        self.monitoring_service.update_portfolio_status(status['portfolio'])
+                except Exception as _:
+                    # 监控服务更新失败不影响主流程
+                    pass
+
+                # 推送策略状态与指标参数到监控服务
+                try:
+                    if self.monitoring_service and self.strategy_manager:
+                        active = self.strategy_manager.get_active_strategies()
+                        recent_signals = len(self.strategy_manager.get_recent_signals(24))
+                        order_summary = self.order_manager.get_order_summary() if self.order_manager else {}
+                        executed_orders = int(order_summary.get('total_orders', 0))
+                        pf = status.get('portfolio') or {}
+                        open_positions = int(pf.get('position_count', len(pf.get('positions', []) or [])))
+
+                        kdj = self.strategy_manager.get_strategy('KDJ')
+                        macd = self.strategy_manager.get_strategy('MACD')
+                        cm = self.strategy_manager.get_strategy('KDJ_MACD')
+                        indicator_params = {}
+                        try:
+                            if kdj:
+                                indicator_params['KDJ'] = dict(kdj.parameters)
+                            if macd:
+                                indicator_params['MACD'] = dict(macd.parameters)
+                            if cm:
+                                # 从合并策略拆分子参数，保持前端展示一致
+                                k_params = (cm.parameters.get('kdj') or {}).copy()
+                                m_params = (cm.parameters.get('macd') or {}).copy()
+                                # 合并通用风险参数与置信度
+                                shared = {
+                                    'stop_loss': cm.parameters.get('stop_loss'),
+                                    'take_profit': cm.parameters.get('take_profit'),
+                                    'min_confidence': cm.parameters.get('min_confidence'),
+                                }
+                                indicator_params['KDJ'] = {**k_params, **shared}
+                                indicator_params['MACD'] = {**m_params, **shared}
+                        except Exception:
+                            # 保底：避免参数对象不可序列化导致失败
+                            pass
+
+                        self.monitoring_service.update_strategy_status({
+                            'active_strategies': active,
+                            'recent_signals': recent_signals,
+                            'executed_orders': executed_orders,
+                            'open_positions': open_positions,
+                            'indicator_params': indicator_params,
+                        })
+                except Exception:
+                    # 推送失败不影响主流程
+                    pass
+
+                # 同步风险管理账户余额（用于回撤等指标）
+                try:
+                    pf = status.get('portfolio') or {}
+                    total_value = float(pf.get('total_value', 0.0))
+                    if total_value > 0 and hasattr(self.risk_manager, 'update_account_balance'):
+                        self.risk_manager.update_account_balance(total_value)
+                except Exception:
+                    pass
                 
-                # 检查风险指标
+                # 检查风险指标（包括25%总额止损）
                 try:
                     if hasattr(self.risk_manager, 'is_daily_limit_reached') and self.risk_manager.is_daily_limit_reached():
                         logger.warning("已达到日亏损限制，暂停交易")
                         # 可以在这里添加暂停交易的逻辑
                 except AttributeError:
                     # RiskManager没有is_daily_limit_reached方法，跳过检查
+                    pass
+
+                # 25%总额止损：当净值较初始资金回撤达到25%时自动停止
+                try:
+                    pf = status.get('portfolio') or {}
+                    pnl_ratio = float(pf.get('pnl_ratio', 0.0))
+                    if pnl_ratio <= -0.25 and self.is_running:
+                        logger.warning("触发25%总额止损，自动停止交易")
+                        # 记录事件
+                        try:
+                            if self.monitoring_service:
+                                self.monitoring_service.log_event(
+                                    event_type="risk",
+                                    level="critical",
+                                    message="触发25%总额止损，自动停止交易",
+                                    data={
+                                        "source": "bot",
+                                        "pnl_ratio": pnl_ratio,
+                                        "total_value": pf.get('total_value'),
+                                        "initial_cash": pf.get('initial_cash')
+                                    }
+                                )
+                        except Exception:
+                            pass
+                        await self.stop()
+                        # 停止后跳出循环防止重复处理
+                        break
+                except Exception:
                     pass
                 
                 # 等待下次检查
@@ -562,8 +885,89 @@ class TradingBot:
                 "active_strategies": self.strategy_manager.get_active_strategies(),
                 "recent_signals": len(self.strategy_manager.get_recent_signals(5))
             }
+            # 同时附加当前KDJ/MACD的参数，便于诊断与前端兼容读取
+            try:
+                kdj = self.strategy_manager.get_strategy('KDJ')
+                macd = self.strategy_manager.get_strategy('MACD')
+                cm = self.strategy_manager.get_strategy('KDJ_MACD')
+                if cm:
+                    k_params = (cm.parameters.get('kdj') or {})
+                    m_params = (cm.parameters.get('macd') or {})
+                    shared = {
+                        'stop_loss': cm.parameters.get('stop_loss'),
+                        'take_profit': cm.parameters.get('take_profit'),
+                        'min_confidence': cm.parameters.get('min_confidence'),
+                    }
+                    status["strategies"]["indicator_params"] = {
+                        "KDJ": {**k_params, **shared},
+                        "MACD": {**m_params, **shared},
+                    }
+                else:
+                    status["strategies"]["indicator_params"] = {
+                        "KDJ": (kdj.parameters if kdj else {}),
+                        "MACD": (macd.parameters if macd else {}),
+                    }
+            except Exception:
+                pass
         
         return status
+
+    async def _on_monitoring_control(self, action: str):
+        """处理来自监控面板的启停控制指令"""
+        try:
+            if action == 'start':
+                if not self.is_running:
+                    await self.start()
+            elif action == 'stop':
+                if self.is_running:
+                    await self.stop()
+        except Exception as e:
+            logger.error(f"处理监控控制指令失败: {str(e)}")
+
+    async def _on_monitoring_params_update(self, strategy: str, updates: Dict[str, Any]):
+        """处理来自监控面板的策略参数更新"""
+        try:
+            if not self.strategy_manager:
+                raise RuntimeError("策略管理器未初始化")
+
+            # 获取目标策略
+            target = self.strategy_manager.get_strategy(strategy)
+            if not target:
+                # 兼容大小写与别名
+                alias = strategy.upper()
+                if alias in ("KDJ", "MACD", "KDJ_MACD"):
+                    target = self.strategy_manager.get_strategy(alias)
+            if not target:
+                raise ValueError(f"未找到指定策略: {strategy}")
+
+            # 组合参数更新（支持深度合并）
+            new_params = dict(target.parameters or {})
+            for key, val in (updates or {}).items():
+                if key in ("kdj", "macd") and isinstance(val, dict):
+                    inner = dict(new_params.get(key, {}))
+                    inner.update(val)
+                    new_params[key] = inner
+                else:
+                    new_params[key] = val
+
+            # 应用并校验
+            target.update_parameters(new_params)
+
+            # 记录日志与状态快照
+            logger.info(f"策略参数更新成功: {strategy} -> {new_params}")
+            try:
+                self.monitoring_service.log_event(
+                    event_type="system",
+                    level="info",
+                    message=f"参数已更新: {strategy}",
+                    data={"params": new_params}
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"处理参数更新失败: {str(e)}")
+            # 将错误抛出以便监控服务发送ACK
+            raise
     
     def signal_handler(self, signum, frame):
         """信号处理"""

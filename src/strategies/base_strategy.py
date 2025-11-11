@@ -160,6 +160,16 @@ class StrategyManager:
             try:
                 signal = strategy.analyze(market_data)
                 if signal.signal_type != SignalType.HOLD:
+                    # 为信号打上来源与ID标签，便于后续共振判断与追踪
+                    try:
+                        signal.metadata["strategy_name"] = strategy.name
+                        # 使用时间戳生成简易ID（秒级）
+                        ts = int(signal.timestamp.timestamp())
+                        signal.metadata.setdefault("signal_id", f"{strategy.name}-{ts}")
+                        # 提供当前价格字段兼容下单逻辑
+                        signal.metadata.setdefault("current_price", signal.price)
+                    except Exception:
+                        pass
                     signals.append(signal)
                     self.signal_history.append(signal)
                     strategy.last_signal = signal

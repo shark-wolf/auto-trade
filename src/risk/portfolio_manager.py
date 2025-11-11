@@ -136,3 +136,47 @@ class PortfolioManager:
         # 执行订单
         for o in orders:
             self.execute_order(o['symbol'], o['qty'], o['price'], o['side'])
+
+    def get_status(self) -> dict:
+        """
+        返回资金与持仓的快照，用于监控展示
+
+        :return: 包含现金、总资产、风险敞口和详细持仓的字典
+        """
+        # 确保总市值为最新
+        self._recalculate_total_value()
+
+        holdings_value = self.total_value - self.cash
+        risk = self.get_portfolio_risk()
+
+        positions_list = []
+        for sym, info in self.positions.items():
+            qty = int(info.get('qty', 0))
+            avg_price = float(info.get('avg_price', 0.0))
+            last_price = float(info.get('last_price', avg_price))
+            value = qty * last_price
+            unrealized_pnl = (last_price - avg_price) * qty
+            unrealized_pnl_ratio = (last_price - avg_price) / avg_price if avg_price > 0 else 0.0
+
+            positions_list.append({
+                'symbol': sym,
+                'qty': qty,
+                'avg_price': avg_price,
+                'last_price': last_price,
+                'value': value,
+                'unrealized_pnl': unrealized_pnl,
+                'unrealized_pnl_ratio': unrealized_pnl_ratio
+            })
+
+        return {
+            'cash': float(self.cash),
+            'holdings_value': float(holdings_value),
+            'total_value': float(self.total_value),
+            'initial_cash': float(self.initial_cash),
+            'pnl': float(self.total_value - self.initial_cash),
+            'pnl_ratio': float((self.total_value - self.initial_cash) / self.initial_cash) if self.initial_cash > 0 else 0.0,
+            'exposure': float(risk.get('exposure', 0.0)),
+            'cash_ratio': float(risk.get('cash_ratio', 0.0)),
+            'position_count': int(risk.get('position_count', 0)),
+            'positions': positions_list
+        }

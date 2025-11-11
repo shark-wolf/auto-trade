@@ -37,6 +37,31 @@ class OKXClient:
         self.session = requests.Session()
         # 交易模式默认：现货为 cash，永续合约为 cross
         self.default_swap_tdmode = "cross"
+        # 开发调试：是否输出所有接口参数
+        self.api_debug = str(os.getenv("API_DEBUG", "false")).lower() == "true"
+
+    def _mask(self, s: str, keep: int = 4) -> str:
+        try:
+            if not s or len(s) <= keep * 2:
+                return "***"
+            return f"{s[:keep]}***{s[-keep:]}"
+        except Exception:
+            return "***"
+
+    def _log_request(self, method: str, url: str, headers: Dict[str, Any], params: Optional[Dict], data: Optional[Dict]):
+        if not self.api_debug:
+            return
+        safe_headers = dict(headers or {})
+        if "OK-ACCESS-KEY" in safe_headers:
+            safe_headers["OK-ACCESS-KEY"] = self._mask(safe_headers["OK-ACCESS-KEY"]) 
+        if "OK-ACCESS-PASSPHRASE" in safe_headers:
+            safe_headers["OK-ACCESS-PASSPHRASE"] = self._mask(safe_headers["OK-ACCESS-PASSPHRASE"]) 
+        if "OK-ACCESS-SIGN" in safe_headers:
+            safe_headers["OK-ACCESS-SIGN"] = self._mask(safe_headers["OK-ACCESS-SIGN"]) 
+        try:
+            logger.debug(f"OKX REQUEST {method} {url}\nHeaders={json.dumps(safe_headers, ensure_ascii=False)}\nParams={json.dumps(params or {}, ensure_ascii=False)}\nData={json.dumps(data or {}, ensure_ascii=False)}")
+        except Exception:
+            logger.debug(f"OKX REQUEST {method} {url} (headers/params/data 记录时发生序列化异常)")
         
     def _generate_signature(self, timestamp: str, method: str, request_path: str, body: str = "") -> str:
         """生成API签名"""
@@ -74,6 +99,8 @@ class OKXClient:
         headers["OK-ACCESS-SIGN"] = signature
         
         try:
+            # 调试：输出所有接口参数
+            self._log_request(method, url, headers, params, data)
             if method.upper() == "GET":
                 response = self.session.get(url, headers=headers, params=params)
             elif method.upper() == "POST":
@@ -87,6 +114,11 @@ class OKXClient:
             if result.get("code") != "0":
                 logger.error(f"API错误: {result.get('msg', '未知错误')}")
                 raise Exception(f"API错误: {result.get('msg', '未知错误')}")
+            if self.api_debug:
+                try:
+                    logger.debug(f"OKX RESPONSE code={result.get('code')} msg={result.get('msg')} dataHead={str(result.get('data'))[:200]}")
+                except Exception:
+                    pass
             
             return result
             
@@ -163,6 +195,10 @@ class OKXClient:
             return self._make_request("GET", "/account/balance")
         result = await asyncio.to_thread(_call)
         return {"success": True, "data": result.get("data", [])}
+
+    async def get_account_balance(self) -> Dict[str, Any]:
+        """兼容主流程的异步账户余额查询"""
+        return await self.get_account_balance_async()
 
     async def place_order(self, symbol: str, side: str, order_type: str, size: float,
                           price: Optional[float] = None, pos_side: Optional[str] = None) -> Dict[str, Any]:

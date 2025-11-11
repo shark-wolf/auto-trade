@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OKX自动交易平台 - 监控仪表板</title>
+    <title>自动交易平台 - 监控仪表板</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * {
@@ -243,6 +243,147 @@
                 margin-bottom: 20px;
             }
         }
+        /* 指标参数表单（嵌入卡片） */
+        .param-row {
+            display: grid;
+            grid-template-columns: 140px 1fr;
+            gap: 8px;
+            align-items: center;
+            margin: 6px 0;
+        }
+        .param-row label { color: #34495e; font-size: 0.9rem; }
+        .param-row input, .param-row select {
+            padding: 8px;
+            border: 1px solid #ecf0f1;
+            border-radius: 6px;
+        }
+        .param-actions {
+            margin-top: 12px;
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        /* 动态参数弹窗 */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.35);
+            backdrop-filter: saturate(120%) blur(2px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .modal {
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.22);
+            width: 640px;
+            max-width: calc(100% - 40px);
+            max-height: 80vh;
+            overflow: auto;
+            transform: translateY(6px) scale(0.98);
+            opacity: 0;
+        }
+        .modal.animate-in {
+            animation: modalIn 180ms ease-out forwards;
+        }
+        @keyframes modalIn {
+            from { transform: translateY(6px) scale(0.98); opacity: 0; }
+            to { transform: translateY(0) scale(1); opacity: 1; }
+        }
+        .modal-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #ecf0f1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+        }
+        .modal-body {
+            padding: 16px 20px;
+            background: #fafbfc;
+        }
+        .modal-actions {
+            padding: 12px 20px;
+            border-top: 1px solid #ecf0f1;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        .form-row {
+            display: grid;
+            grid-template-columns: 160px 1fr;
+            gap: 10px;
+            align-items: center;
+            margin: 8px 0;
+        }
+        .form-row label {
+            color: #7f8c8d;
+        }
+        .group-title {
+            margin: 12px 0 6px;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+        /* 指标参数美化展示 */
+        .param-group {
+            margin-top: 6px;
+        }
+        .param-group-title {
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .param-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .param-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border: 1px solid #e6eaee;
+            border-radius: 999px;
+            background: #f8fafb;
+            color: #34495e;
+            font-size: 12px;
+        }
+        .chip-key {
+            color: #7f8c8d;
+        }
+        .chip-value {
+            font-weight: 600;
+            color: #2c3e50;
+        }
+        .param-empty {
+            color: #95a5a6;
+        }
+        .modal-body input, .modal-body select {
+            padding: 10px 12px;
+            border: 1px solid #e6eaee;
+            border-radius: 8px;
+            transition: box-shadow 0.2s ease, border-color 0.2s ease;
+            background: #fff;
+        }
+        .modal-body input:focus, .modal-body select:focus {
+            outline: none;
+            border-color: #3498db;
+            box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.15);
+        }
+        .btn-secondary {
+            background: #ecf0f1;
+            color: #2c3e50;
+        }
+        .btn-secondary:hover {
+            background: #dfe6e9;
+        }
     </style>
 </head>
 <body>
@@ -253,17 +394,61 @@
 
     <div class="container">
         <div class="header">
-            <h1>🚀 OKX自动交易平台</h1>
+            <h1>🚀自动交易平台</h1>
             <p>实时监控仪表板 - 交易状态一目了然</p>
         </div>
 
         <div class="controls">
             <button class="btn" onclick="refreshData()">🔄 刷新数据</button>
             <button class="btn btn-danger" onclick="clearLogs()">🗑️ 清空日志</button>
+            <span style="margin-left:10px"></span>
+            <button class="btn" onclick="startAutoTrading()">▶️ 开始自动交易</button>
+            <button class="btn btn-danger" onclick="stopAutoTrading()">⏸️ 停止自动交易</button>
         </div>
 
         <div class="dashboard">
-            <!-- 系统状态 -->
+            <!-- 🎯 策略状态（置顶） -->
+            <div class="card">
+                <h3>🎯 策略状态</h3>
+                <div class="metric">
+                    <span class="metric-label">活跃策略数</span>
+                    <span class="metric-value neutral" id="activeStrategies">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">当前策略</span>
+                    <span class="metric-value neutral" id="activeStrategyList">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">今日信号数</span>
+                    <span class="metric-value neutral" id="signalsToday">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">执行订单数</span>
+                    <span class="metric-value neutral" id="executedOrders">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">持仓数量</span>
+                    <span class="metric-value neutral" id="openPositions">--</span>
+                </div>
+            </div>
+
+            <!-- 🧭 指标参数（与策略状态并列） -->
+            <div class="card">
+                <h3>🧭 指标参数</h3>
+                <div class="param-group">
+                    <div class="param-group-title">KDJ 参数</div>
+                    <div class="param-chips" id="kdjParamChips"><span class="param-empty">--</span></div>
+                </div>
+                <div class="param-group">
+                    <div class="param-group-title">MACD 参数</div>
+                    <div class="param-chips" id="macdParamChips"><span class="param-empty">--</span></div>
+                </div>
+                <div class="param-actions" style="border-top: 1px solid #ecf0f1; padding-top: 10px;">
+                    <button class="btn" onclick="openParamModal()">设置参数（弹窗）</button>
+                </div>
+            </div>
+
+            <!-- 📊 系统状态 -->
             <div class="card">
                 <h3>📊 系统状态</h3>
                 <div class="metric">
@@ -284,28 +469,7 @@
                 </div>
             </div>
 
-            <!-- 交易统计 -->
-            <div class="card">
-                <h3>📈 交易统计</h3>
-                <div class="metric">
-                    <span class="metric-label">总交易次数</span>
-                    <span class="metric-value neutral" id="totalTrades">--</span>
-                </div>
-                <div class="metric">
-                    <span class="metric-label">胜率</span>
-                    <span class="metric-value" id="winRate">--</span>
-                </div>
-                <div class="metric">
-                    <span class="metric-label">总盈亏</span>
-                    <span class="metric-value" id="totalPnL">--</span>
-                </div>
-                <div class="metric">
-                    <span class="metric-label">夏普比率</span>
-                    <span class="metric-value neutral" id="sharpeRatio">--</span>
-                </div>
-            </div>
-
-            <!-- 风险指标 -->
+            <!-- ⚠️ 风险指标 -->
             <div class="card">
                 <h3>⚠️ 风险指标</h3>
                 <div class="metric">
@@ -326,24 +490,72 @@
                 </div>
             </div>
 
-            <!-- 策略状态 -->
+            <!-- 📈 交易统计 -->
             <div class="card">
-                <h3>🎯 策略状态</h3>
+                <h3>📈 交易统计</h3>
                 <div class="metric">
-                    <span class="metric-label">活跃策略数</span>
-                    <span class="metric-value neutral" id="activeStrategies">--</span>
+                    <span class="metric-label">总交易次数</span>
+                    <span class="metric-value neutral" id="totalTrades">--</span>
                 </div>
                 <div class="metric">
-                    <span class="metric-label">今日信号数</span>
-                    <span class="metric-value neutral" id="signalsToday">--</span>
+                    <span class="metric-label">胜率</span>
+                    <span class="metric-value" id="winRate">--</span>
                 </div>
                 <div class="metric">
-                    <span class="metric-label">执行订单数</span>
-                    <span class="metric-value neutral" id="executedOrders">--</span>
+                    <span class="metric-label">总盈亏</span>
+                    <span class="metric-value" id="totalPnL">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">夏普比率</span>
+                    <span class="metric-value neutral" id="sharpeRatio">--</span>
+                </div>
+            </div>
+
+            <!-- 💰 资金与持仓 -->
+            <div class="card">
+                <h3>💰 资金与持仓</h3>
+                <div class="metric">
+                    <span class="metric-label">总资产</span>
+                    <span class="metric-value neutral" id="pfTotalValue">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">可用资金</span>
+                    <span class="metric-value neutral" id="pfCash">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">持仓市值</span>
+                    <span class="metric-value neutral" id="pfHoldingsValue">--</span>
                 </div>
                 <div class="metric">
                     <span class="metric-label">持仓数量</span>
-                    <span class="metric-value neutral" id="openPositions">--</span>
+                    <span class="metric-value neutral" id="pfPositionCount">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">盈亏 (净值-初始)</span>
+                    <span class="metric-value" id="pfPnL">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">风险敞口</span>
+                    <span class="metric-value" id="pfExposure">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">现金占比</span>
+                    <span class="metric-value" id="pfCashRatio">--</span>
+                </div>
+                <div style="margin-top: 10px;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="text-align: left; border-bottom: 1px solid #ecf0f1;">
+                                <th>交易对</th>
+                                <th>数量</th>
+                                <th>均价</th>
+                                <th>现价</th>
+                                <th>市值</th>
+                                <th>未实现盈亏</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pfPositionsBody"></tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -361,6 +573,35 @@
                 <h3>📈 交易分布图</h3>
                 <div class="chart-container">
                     <canvas id="tradeChart"></canvas>
+                </div>
+            </div>
+            
+            <!-- 指标参数卡片已移至上方，图表区仅保留图表 -->
+        </div>
+
+        <!-- 动态参数弹窗 -->
+        <div id="paramModalOverlay" class="modal-overlay">
+            <div class="modal">
+                <div class="modal-header">
+                    <div style="font-weight:600; color:#2c3e50; display:flex; align-items:center; gap:8px;">
+                        <span>⚙️ 设置指标参数</span>
+                    </div>
+                    <button class="btn btn-secondary" onclick="closeParamModal()" aria-label="关闭">✖</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-row">
+                        <label>目标策略</label>
+                        <select id="modalStrategy" onchange="renderParamFields()">
+                            <option value="KDJ_MACD">KDJ_MACD（组合）</option>
+                            <option value="KDJ">KDJ</option>
+                            <option value="MACD">MACD</option>
+                        </select>
+                    </div>
+                    <div id="paramFieldsContainer"></div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn-secondary btn" onclick="closeParamModal()">取消</button>
+                    <button class="btn" onclick="submitDynamicParams()">保存并应用</button>
                 </div>
             </div>
         </div>
@@ -391,9 +632,11 @@
 
             connectWebSocket() {
                 try {
-                    // 使用原生WebSocket连接到服务器
-                    // 为避免在某些环境下 localhost 解析到 IPv6 导致连接异常，改用明确的 IPv4 地址
-                    this.socket = new WebSocket('ws://127.0.0.1:8765');
+                    // 使用原生WebSocket连接到服务器（支持通过查询参数覆盖端口/主机）
+                    const params = new URLSearchParams(window.location.search);
+                    const wsPort = Number(params.get('ws_port')) || 8766;
+                    const wsHost = params.get('ws_host') || '127.0.0.1';
+                    this.socket = new WebSocket(`ws://${wsHost}:${wsPort}`);
 
                     this.socket.onopen = () => {
                         this.updateConnectionStatus(true);
@@ -410,9 +653,14 @@
                         }, 1000);
                     };
 
-                    this.socket.onmessage = (event) => {
-                        try {
-                            const data = JSON.parse(event.data);
+                this.socket.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        // 控制指令反馈
+                        if (data.type === 'ack' && data.action) {
+                            this.logEvent('系统', `后端已处理控制指令: ${data.action}`, 'success');
+                            return;
+                        }
                             // 服务器发送的是完整的仪表板数据，需要解析并更新各个组件
                             if (data.system_status) {
                                 this.updateSystemStatus(data.system_status);
@@ -425,6 +673,13 @@
                             }
                             if (data.strategy_status) {
                                 this.updateStrategyStatus(data.strategy_status);
+                                const ip = data.strategy_status.indicator_params;
+                                if (ip) {
+                                    this.updateIndicatorParams(ip);
+                                }
+                            }
+                            if (data.portfolio_status) {
+                                this.updatePortfolioStatus(data.portfolio_status);
                             }
                             if (data.recent_events) {
                                 // 处理最近的事件
@@ -510,10 +765,86 @@
             }
 
             updateStrategyStatus(data) {
-                document.getElementById('activeStrategies').textContent = data.active_strategies;
-                document.getElementById('signalsToday').textContent = data.signals_today;
+                const strategies = Array.isArray(data.active_strategies) ? data.active_strategies : [];
+                // 显示数量
+                document.getElementById('activeStrategies').textContent = strategies.length;
+                // 显示列表
+                document.getElementById('activeStrategyList').textContent = strategies.length ? strategies.join('、') : '--';
+                document.getElementById('signalsToday').textContent = data.recent_signals;
                 document.getElementById('executedOrders').textContent = data.executed_orders;
                 document.getElementById('openPositions').textContent = data.open_positions;
+            }
+
+            updateIndicatorParams(params) {
+                const kdj = params && params.KDJ ? params.KDJ : null;
+                const macd = params && params.MACD ? params.MACD : null;
+                renderParamChips('kdjParamChips', kdj);
+                renderParamChips('macdParamChips', macd);
+                // 记录并回填表单（保留兼容调用）
+                try {
+                    window.currentIndicatorParams = params;
+                    prefillParamForm(params);
+                } catch (_) {}
+            }
+
+            formatParams(obj) {
+                try {
+                    const entries = Object.entries(obj || {});
+                    if (!entries.length) return '--';
+                    return entries.map(([k, v]) => `${k}=${v}`).join(', ');
+                } catch (_) {
+                    return '--';
+                }
+            }
+
+            updatePortfolioStatus(data) {
+                const totalValueEl = document.getElementById('pfTotalValue');
+                const cashEl = document.getElementById('pfCash');
+                const holdingsEl = document.getElementById('pfHoldingsValue');
+                const positionCountEl = document.getElementById('pfPositionCount');
+                const pnlEl = document.getElementById('pfPnL');
+                const exposureEl = document.getElementById('pfExposure');
+                const cashRatioEl = document.getElementById('pfCashRatio');
+
+                const totalValue = Number(data.total_value ?? 0);
+                const cash = Number(data.cash ?? 0);
+                const holdingsValue = Number(data.holdings_value ?? Math.max(totalValue - cash, 0));
+                const positionCount = Number(data.position_count ?? (Array.isArray(data.positions) ? data.positions.length : 0));
+                const pnl = Number(data.pnl ?? 0);
+                const exposure = Number(data.exposure ?? 0);
+                const cashRatio = Number(data.cash_ratio ?? 0);
+
+                totalValueEl.textContent = this.formatCurrency(totalValue);
+                cashEl.textContent = this.formatCurrency(cash);
+                holdingsEl.textContent = this.formatCurrency(holdingsValue);
+                positionCountEl.textContent = positionCount;
+                pnlEl.textContent = this.formatCurrency(pnl);
+                exposureEl.textContent = `${(exposure * 100).toFixed(1)}%`;
+                cashRatioEl.textContent = `${(cashRatio * 100).toFixed(1)}%`;
+
+                // 盈亏颜色
+                pnlEl.className = `metric-value ${pnl >= 0 ? 'positive' : 'negative'}`;
+                exposureEl.className = `metric-value ${exposure > 0.5 ? 'negative' : exposure > 0.3 ? 'neutral' : 'positive'}`;
+                cashRatioEl.className = `metric-value ${cashRatio < 0.2 ? 'negative' : cashRatio < 0.4 ? 'neutral' : 'positive'}`;
+
+                // 更新持仓列表
+                const tbody = document.getElementById('pfPositionsBody');
+                tbody.innerHTML = '';
+                const positions = Array.isArray(data.positions) ? data.positions : [];
+                positions.forEach(p => {
+                    const tr = document.createElement('tr');
+                    tr.style.borderBottom = '1px solid #ecf0f1';
+                    const pnlClass = (Number(p.unrealized_pnl ?? 0) >= 0) ? 'positive' : 'negative';
+                    tr.innerHTML = `
+                        <td>${p.symbol}</td>
+                        <td>${Number(p.qty ?? 0)}</td>
+                        <td>${this.formatCurrency(Number(p.avg_price ?? 0))}</td>
+                        <td>${this.formatCurrency(Number(p.last_price ?? p.avg_price ?? 0))}</td>
+                        <td>${this.formatCurrency(Number(p.value ?? 0))}</td>
+                        <td class="${pnlClass}">${this.formatCurrency(Number(p.unrealized_pnl ?? 0))}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
             }
 
             initializeCharts() {
@@ -652,7 +983,236 @@
             }
         }
 
+        // 渲染参数为徽章 chips（全局函数）
+        function renderParamChips(containerId, obj) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            container.innerHTML = '';
+            try {
+                const entries = Object.entries(obj || {}).filter(([_, v]) => v !== undefined && v !== null);
+                if (!entries.length) {
+                    container.innerHTML = '<span class="param-empty">--</span>';
+                    return;
+                }
+                // 固定顺序优先（如果存在）
+                const order = ['period','k_smooth','d_smooth','oversold','overbought','fast','slow','signal','stop_loss','take_profit','min_confidence'];
+                entries.sort((a,b) => order.indexOf(a[0]) - order.indexOf(b[0]));
+                entries.forEach(([k, v]) => {
+                    const chip = document.createElement('span');
+                    chip.className = 'param-chip';
+                    chip.innerHTML = `<span class="chip-key">${k}</span><span class="chip-value">${v}</span>`;
+                    container.appendChild(chip);
+                });
+            } catch (e) {
+                container.innerHTML = '<span class="param-empty">--</span>';
+            }
+        }
+
+        // 前端乐观更新：根据提交的 updates 立即更新“指标参数”chips
+        function optimisticUpdateIndicatorParams(strategy, updates) {
+            try {
+                const current = window.currentIndicatorParams || {};
+                const kdjCur = Object.assign({}, current.KDJ || {});
+                const macdCur = Object.assign({}, current.MACD || {});
+                const shared = {};
+                ['stop_loss','take_profit','min_confidence'].forEach(k => {
+                    if (updates && updates[k] !== undefined) shared[k] = updates[k];
+                });
+
+                if (strategy === 'KDJ_MACD') {
+                    if (updates.kdj && typeof updates.kdj === 'object') Object.assign(kdjCur, updates.kdj);
+                    if (updates.macd && typeof updates.macd === 'object') Object.assign(macdCur, updates.macd);
+                    Object.assign(kdjCur, shared);
+                    Object.assign(macdCur, shared);
+                } else if (strategy === 'KDJ') {
+                    Object.assign(kdjCur, updates || {});
+                } else if (strategy === 'MACD') {
+                    Object.assign(macdCur, updates || {});
+                }
+
+                const merged = { KDJ: kdjCur, MACD: macdCur };
+                window.currentIndicatorParams = merged;
+                if (typeof dashboard !== 'undefined' && dashboard) {
+                    dashboard.updateIndicatorParams(merged);
+                } else {
+                    renderParamChips('kdjParamChips', merged.KDJ);
+                    renderParamChips('macdParamChips', merged.MACD);
+                }
+            } catch (_) {}
+        }
+
+        // 动态参数弹窗逻辑
+        const PARAM_DEFS = {
+            KDJ: [
+                { key: 'period', type: 'number', step: 1, min: 1, placeholder: 9 },
+                { key: 'k_smooth', type: 'number', step: 1, min: 1, placeholder: 3 },
+                { key: 'd_smooth', type: 'number', step: 1, min: 1, placeholder: 3 },
+                { key: 'oversold', type: 'number', step: 1, min: 0, max: 100, placeholder: 20 },
+                { key: 'overbought', type: 'number', step: 1, min: 0, max: 100, placeholder: 80 },
+            ],
+            MACD: [
+                { key: 'fast', type: 'number', step: 1, min: 1, placeholder: 12 },
+                { key: 'slow', type: 'number', step: 1, min: 1, placeholder: 26 },
+                { key: 'signal', type: 'number', step: 1, min: 1, placeholder: 9 },
+            ],
+            COMMON: [
+                { key: 'min_confidence', type: 'number', step: 0.05, min: 0, max: 1, placeholder: 0.6 },
+                { key: 'stop_loss', type: 'number', step: 0.01, min: 0, max: 1, placeholder: 0.02 },
+                { key: 'take_profit', type: 'number', step: 0.01, min: 0, max: 1, placeholder: 0.04 },
+            ],
+        };
+
+        function openParamModal() {
+            const overlay = document.getElementById('paramModalOverlay');
+            overlay.style.display = 'flex';
+            // 动效
+            const modal = overlay.querySelector('.modal');
+            if (modal) {
+                // 先强制回到起始状态
+                modal.classList.remove('animate-in');
+                // 下一帧触发动画
+                requestAnimationFrame(() => { modal.classList.add('animate-in'); });
+            }
+            // 渲染字段
+            renderParamFields();
+            // 点击遮罩关闭
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) closeParamModal();
+            }, { once: true });
+            // ESC关闭
+            const onEsc = (e) => { if (e.key === 'Escape') { closeParamModal(); document.removeEventListener('keydown', onEsc); } };
+            document.addEventListener('keydown', onEsc);
+        }
+
+        function closeParamModal() {
+            const overlay = document.getElementById('paramModalOverlay');
+            const modal = overlay.querySelector('.modal');
+            if (modal) modal.classList.remove('animate-in');
+            overlay.style.display = 'none';
+        }
+
+        function renderParamFields() {
+            const container = document.getElementById('paramFieldsContainer');
+            container.innerHTML = '';
+            const strategy = document.getElementById('modalStrategy').value || 'KDJ_MACD';
+            const current = window.currentIndicatorParams || {};
+
+            const addGroup = (title, defs, values) => {
+                const groupTitle = document.createElement('div');
+                groupTitle.className = 'group-title';
+                groupTitle.textContent = title;
+                container.appendChild(groupTitle);
+                defs.forEach(def => {
+                    const row = document.createElement('div');
+                    row.className = 'form-row';
+                    const label = document.createElement('label');
+                    label.textContent = def.key;
+                    const input = document.createElement('input');
+                    input.type = def.type || 'number';
+                    if (def.step !== undefined) input.step = String(def.step);
+                    if (def.min !== undefined) input.min = String(def.min);
+                    if (def.max !== undefined) input.max = String(def.max);
+                    input.placeholder = def.placeholder !== undefined ? String(def.placeholder) : '';
+                    const val = values && values[def.key];
+                    if (val !== undefined && val !== null) input.value = String(val);
+                    input.id = `modal_${title.toLowerCase()}_${def.key}`;
+                    row.appendChild(label);
+                    row.appendChild(input);
+                    container.appendChild(row);
+                });
+            };
+
+            if (strategy === 'KDJ_MACD') {
+                addGroup('KDJ', PARAM_DEFS.KDJ, current.KDJ || {});
+                addGroup('MACD', PARAM_DEFS.MACD, current.MACD || {});
+                addGroup('COMMON', PARAM_DEFS.COMMON, current.KDJ || {});
+            } else if (strategy === 'KDJ') {
+                addGroup('KDJ', PARAM_DEFS.KDJ, current.KDJ || {});
+                addGroup('COMMON', PARAM_DEFS.COMMON, current.KDJ || {});
+            } else if (strategy === 'MACD') {
+                addGroup('MACD', PARAM_DEFS.MACD, current.MACD || {});
+                addGroup('COMMON', PARAM_DEFS.COMMON, current.MACD || {});
+            }
+        }
+
+        function readNumber(id) {
+            const el = document.getElementById(id);
+            if (!el) return undefined;
+            const v = el.value;
+            if (v === undefined || v === null || v === '') return undefined;
+            const n = Number(v);
+            return Number.isFinite(n) ? n : undefined;
+        }
+
+        function submitDynamicParams() {
+            const strategy = (document.getElementById('modalStrategy')?.value) || 'KDJ_MACD';
+            const updates = {};
+
+            const readGroup = (title, defs) => {
+                const obj = {};
+                defs.forEach(def => {
+                    const v = readNumber(`modal_${title.toLowerCase()}_${def.key}`);
+                    if (v !== undefined) obj[def.key] = v;
+                });
+                return obj;
+            };
+
+            if (strategy === 'KDJ_MACD') {
+                const kdj = readGroup('KDJ', PARAM_DEFS.KDJ);
+                const macd = readGroup('MACD', PARAM_DEFS.MACD);
+                const common = readGroup('COMMON', PARAM_DEFS.COMMON);
+                if (Object.keys(kdj).length) updates.kdj = kdj;
+                if (Object.keys(macd).length) updates.macd = macd;
+                Object.assign(updates, common);
+            } else if (strategy === 'KDJ') {
+                const kdj = readGroup('KDJ', PARAM_DEFS.KDJ);
+                const common = readGroup('COMMON', PARAM_DEFS.COMMON);
+                Object.assign(updates, kdj, common);
+            } else if (strategy === 'MACD') {
+                const macd = readGroup('MACD', PARAM_DEFS.MACD);
+                const common = readGroup('COMMON', PARAM_DEFS.COMMON);
+                Object.assign(updates, macd, common);
+            }
+
+            try {
+                if (!dashboard || !dashboard.socket || dashboard.socket.readyState !== WebSocket.OPEN) {
+                    dashboard && dashboard.logEvent('系统', '未连接监控服务，无法更新参数', 'warning');
+                    return;
+                }
+                // 按后端协议发送：type= 'params'，payload= {strategy, updates}
+                dashboard.socket.send(JSON.stringify({ type: 'params', strategy, updates }));
+                dashboard.logEvent('系统', `已发送参数更新: ${strategy}`, 'info');
+                // 前端乐观更新显示，立即刷新 chips
+                optimisticUpdateIndicatorParams(strategy, updates);
+                closeParamModal();
+            } catch (e) {
+                dashboard.logEvent('错误', `发送参数更新失败: ${e.message}`, 'error');
+            }
+        }
+
         // 全局函数
+        function sendControl(action) {
+            if (!dashboard || !dashboard.socket || dashboard.socket.readyState !== WebSocket.OPEN) {
+                dashboard && dashboard.logEvent('系统', '未连接监控服务，无法发送控制指令', 'warning');
+                return;
+            }
+            try {
+                const msg = { type: 'control', action };
+                dashboard.socket.send(JSON.stringify(msg));
+                dashboard.logEvent('系统', `已发送控制指令: ${action}`, 'info');
+            } catch (e) {
+                dashboard.logEvent('错误', `发送控制指令失败: ${e.message}`, 'error');
+            }
+        }
+
+        function startAutoTrading() {
+            sendControl('start');
+        }
+
+        function stopAutoTrading() {
+            sendControl('stop');
+        }
+
         function refreshData() {
             dashboard.logEvent('系统', '手动刷新数据', 'info');
             // 原生WebSocket不支持 emit/connected，使用 readyState 判断连接状态

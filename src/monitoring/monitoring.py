@@ -451,10 +451,18 @@ class MonitoringService:
         self.metrics_collector = MetricsCollector()
         self.event_logger = EventLogger()
         self.dashboard = MonitoringDashboard(self.metrics_collector, self.event_logger)
+        # 外部状态（例如来自交易机器人）
+        self.portfolio_status: Optional[Dict[str, Any]] = None
+        # 外部策略状态（由交易机器人推送，用于显示策略与指标参数）
+        self.strategy_status: Optional[Dict[str, Any]] = None
         
         # WebSocket服务器
         self.ws_server = None
         self.ws_clients = set()
+        # 控制回调（由交易机器人注册，用于处理启停等指令）
+        self.control_callback = None
+        # 参数更新回调（由交易机器人注册，用于处理指标参数更新）
+        self.params_callback = None
         
         # 数据库连接
         self.db_connection = None
@@ -466,6 +474,21 @@ class MonitoringService:
         # 启动后台任务
         self.background_tasks = []
         self.is_running = False
+
+    def update_portfolio_status(self, status: Dict[str, Any]):
+        """更新外部传入的组合状态快照"""
+        try:
+            self.portfolio_status = status or {}
+        except Exception:
+            # 保底防护，避免异常导致整个监控失败
+            self.portfolio_status = {}
+
+    def update_strategy_status(self, status: Dict[str, Any]):
+        """更新外部传入的策略状态（包含活动策略与指标参数）"""
+        try:
+            self.strategy_status = status or {}
+        except Exception:
+            self.strategy_status = {}
     
     def _initialize_database(self):
         """初始化数据库"""
@@ -647,7 +670,7 @@ class MonitoringService:
             logger.error(f"启动WebSocket服务器失败: {str(e)}")
     
     async def _handle_websocket_client(self, websocket):
-        """处理WebSocket客户端连接（兼容 websockets v12+ 的单参数 handler）"""
+        """处理WebSocket客户端连接并支持控制消息（websockets v12+ 单参数 handler）"""
         self.ws_clients.add(websocket)
         try:
             remote = getattr(websocket, 'remote_address', None)
@@ -655,45 +678,147 @@ class MonitoringService:
             logger.info(f"WebSocket客户端连接: {remote}, path: {path}")
         except Exception:
             logger.info("WebSocket客户端连接")
-        
+
+        # 启动发送循环任务
+        sender_task = asyncio.create_task(self._ws_send_loop(websocket))
         try:
-            # 发送初始数据
-            dashboard_data = self.dashboard.get_dashboard_data()
-            # 注入连接数与每日亏损限额
-            try:
-                dashboard_data["system_status"]["connections"] = len(self.ws_clients)
-            except Exception:
-                pass
-            try:
-                if "risk_metrics" in dashboard_data:
-                    dashboard_data["risk_metrics"]["daily_loss_limit"] = float(self.config.get("max_daily_loss", 0.0))
-            except Exception:
-                pass
-            await websocket.send(json.dumps(dashboard_data))
-            
-            # 持续发送更新数据
-            while self.is_running:
-                await asyncio.sleep(5)  # 每5秒更新一次
-                
-                dashboard_data = self.dashboard.get_dashboard_data()
-                # 注入连接数与每日亏损限额
+            # 接收控制消息
+            async for raw in websocket:
                 try:
-                    dashboard_data["system_status"]["connections"] = len(self.ws_clients)
+                    msg = json.loads(raw)
                 except Exception:
-                    pass
-                try:
-                    if "risk_metrics" in dashboard_data:
-                        dashboard_data["risk_metrics"]["daily_loss_limit"] = float(self.config.get("max_daily_loss", 0.0))
-                except Exception:
-                    pass
-                await websocket.send(json.dumps(dashboard_data))
-                
+                    continue
+
+                if isinstance(msg, dict) and msg.get("type") == "control":
+                    action = str(msg.get("action", "")).lower()
+                    if action in ("start", "stop"):
+                        # 记录事件
+                        try:
+                            self.log_event(
+                                event_type="system",
+                                level="info",
+                                message=f"收到控制指令: {action}",
+                                data={"source": "dashboard", "action": action}
+                            )
+                        except Exception:
+                            pass
+
+                # 参数更新：允许前端修改策略指标参数
+                elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("params", "update_params"):
+                    strategy = str(msg.get("strategy", "")).strip()
+                    updates = msg.get("updates") or {}
+
+                    try:
+                        # 记录事件
+                        try:
+                            self.log_event(
+                                event_type="system",
+                                level="info",
+                                message=f"收到参数更新: {strategy}",
+                                data={"source": "dashboard", "strategy": strategy, "updates": updates}
+                            )
+                        except Exception:
+                            pass
+
+                        # 回调交易机器人应用参数
+                        if callable(self.params_callback):
+                            result = self.params_callback(strategy, updates)
+                            if asyncio.iscoroutine(result):
+                                await result
+
+                        # 反馈客户端
+                        try:
+                            await websocket.send(json.dumps({
+                                "type": "ack",
+                                "action": "params",
+                                "strategy": strategy,
+                                "status": "ok"
+                            }))
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        logger.error(f"处理参数更新失败: {str(e)}")
+                        try:
+                            await websocket.send(json.dumps({
+                                "type": "ack",
+                                "action": "params",
+                                "strategy": strategy,
+                                "status": "error",
+                                "error": str(e)
+                            }))
+                        except Exception:
+                            pass
+
+                        # 调用控制回调
+                        try:
+                            if callable(self.control_callback):
+                                await self.control_callback(action)
+                        except Exception as e:
+                            logger.error(f"执行控制回调失败: {str(e)}")
+                        # 反馈客户端
+                        try:
+                            await websocket.send(json.dumps({
+                                "type": "ack",
+                                "action": action,
+                                "status": "ok"
+                            }))
+                        except Exception:
+                            pass
+
         except websockets.exceptions.ConnectionClosed:
-            logger.info(f"WebSocket客户端断开连接: {websocket.remote_address}")
+            logger.info(f"WebSocket客户端断开连接: {getattr(websocket, 'remote_address', '')}")
         except Exception as e:
             logger.error(f"WebSocket客户端错误: {str(e)}")
         finally:
+            # 停止发送循环
+            try:
+                sender_task.cancel()
+                await asyncio.gather(sender_task, return_exceptions=True)
+            except Exception:
+                pass
             self.ws_clients.discard(websocket)
+
+    async def _ws_send_loop(self, websocket):
+        """向指定客户端周期性推送仪表板数据"""
+        try:
+            # 首次发送
+            await self._send_dashboard_once(websocket)
+            # 周期推送
+            while self.is_running:
+                await asyncio.sleep(5)
+                await self._send_dashboard_once(websocket)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"WebSocket发送循环错误: {str(e)}")
+
+    async def _send_dashboard_once(self, websocket):
+        """构造并发送一次仪表板数据"""
+        dashboard_data = self.dashboard.get_dashboard_data()
+        # 注入连接数与每日亏损限额
+        try:
+            dashboard_data["system_status"]["connections"] = len(self.ws_clients)
+        except Exception:
+            pass
+        try:
+            if "risk_metrics" in dashboard_data:
+                dashboard_data["risk_metrics"]["daily_loss_limit"] = float(self.config.get("max_daily_loss", 0.0))
+        except Exception:
+            pass
+        # 注入资金与持仓
+        try:
+            if self.portfolio_status is not None:
+                dashboard_data["portfolio_status"] = self.portfolio_status
+        except Exception:
+            pass
+        # 注入策略状态（含指标参数）
+        try:
+            if self.strategy_status is not None:
+                dashboard_data["strategy_status"] = self.strategy_status
+            
+        except Exception:
+            pass
+        await websocket.send(json.dumps(dashboard_data))
     
     # 公共API方法
     def record_metric(self, metric_name: str, value: float, tags: Dict[str, str] = None):
@@ -716,6 +841,15 @@ class MonitoringService:
     def get_event_summary(self, hours: int = 24) -> Dict[str, Any]:
         """获取事件摘要"""
         return self.event_logger.get_event_summary(hours)
+
+    # 控制回调注册
+    def register_control_callback(self, callback):
+        """注册控制回调，用于处理来自前端的启停指令"""
+        self.control_callback = callback
+
+    def register_params_callback(self, callback):
+        """注册参数更新回调，用于处理来自前端的指标参数更新"""
+        self.params_callback = callback
 
 
 # 全局监控服务实例

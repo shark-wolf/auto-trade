@@ -226,6 +226,19 @@ class MarketDataHandler:
             # 取最后一根（最新）K线
             last = data[-1]
             if isinstance(last, list) and len(last) >= 6:
+                # 解析时间戳与收盘确认标记
+                ts_val = None
+                confirm_val = False
+                try:
+                    ts_val = int(last[0])
+                except Exception:
+                    ts_val = None
+                try:
+                    raw_confirm = last[8] if len(last) >= 9 else 0
+                    # OKX文档：confirm布尔，部分实现可能为'1'/'0'或'true'/'false'
+                    confirm_val = str(raw_confirm).lower() in ("true", "1")
+                except Exception:
+                    confirm_val = False
                 # 解析数组索引
                 open_px = float(last[1])
                 high_px = float(last[2])
@@ -238,7 +251,9 @@ class MarketDataHandler:
                     "low": low_px,
                     "close": close_px,
                     "volume": volume,
-                    "timestamp": datetime.now()
+                    "timestamp": datetime.now(),
+                    "ts": ts_val,
+                    "confirm": confirm_val
                 }
                 logger.debug(f"K线更新: {inst_id} - close: {close_px}")
             elif isinstance(last, dict):
@@ -249,7 +264,9 @@ class MarketDataHandler:
                     "low": float(last.get("l", 0)),
                     "close": float(last.get("c", 0)),
                     "volume": float(last.get("vol", 0)),
-                    "timestamp": datetime.now()
+                    "timestamp": datetime.now(),
+                    "ts": int(last.get("ts", 0)) if last.get("ts") else None,
+                    "confirm": bool(last.get("confirm", False))
                 }
             else:
                 logger.warning(f"未识别的K线数据格式: {type(last)}")

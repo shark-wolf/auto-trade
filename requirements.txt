@@ -21,6 +21,7 @@ loguru>=0.7.0
 
 # WebSocket
 websockets>=12.0
+aiohttp>=3.9.0
 
 # HTTP请求
 requests>=2.31.0
