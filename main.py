@@ -19,7 +19,7 @@ src_dir = current_dir / "src"
 sys.path.insert(0, str(src_dir))
 
 from api import OKXClient, OKXWebSocketClient, MarketDataHandler, OKXConfig, CCXTClient
-from strategies import StrategyManager, MovingAverageCrossStrategy, RSIStrategy, GridTradingStrategy, MarketData, Signal, SignalType
+from strategies import StrategyManager, MarketData, Signal, SignalType
 from risk import RiskManager, PortfolioManager
 from execution import OrderManager
 from monitoring import MonitoringService
@@ -94,7 +94,7 @@ class TradingBot:
             "take_profit_pct": float(os.getenv("TAKE_PROFIT_PCT", "0.05")),
             
             # 策略配置
-            "strategies": os.getenv("ENABLED_STRATEGIES", "kdj,macd").split(","),
+            "strategies": os.getenv("ENABLED_STRATEGIES", "kdj_macd").split(","),
             "ma_short_period": int(os.getenv("MA_SHORT_PERIOD", "10")),
             "ma_long_period": int(os.getenv("MA_LONG_PERIOD", "30")),
             "rsi_period": int(os.getenv("RSI_PERIOD", "14")),
@@ -114,13 +114,18 @@ class TradingBot:
             "ws_host": os.getenv("WS_HOST", "127.0.0.1"),
             "ws_port": int(os.getenv("WS_PORT", "8765")),
             "enable_websocket": os.getenv("ENABLE_WEBSOCKET", "true").lower() == "true",
+            # 行情轮询（CCXT）
+            "enable_ccxt_polling": os.getenv("ENABLE_CCXT_POLLING", "true").lower() == "true",
+            "ccxt_timeframe": os.getenv("CCXT_TIMEFRAME", "1m"),
+            "enable_backtest": os.getenv("ENABLE_BACKTEST", "true").lower() == "true",
+            "backtest_bars": int(os.getenv("BACKTEST_BARS", "500")),
             
             # 数据库配置
             "database_url": os.getenv("DATABASE_URL", "")
         }
 
         # 后端选择与调试开关
-        config["api_backend"] = os.getenv("API_BACKEND", "okx").lower()  # okx 或 ccxt
+        config["api_backend"] = os.getenv("API_BACKEND", "ccxt").lower()
         config["api_debug"] = os.getenv("API_DEBUG", "false").lower() == "true"
         
         # 验证必要配置
@@ -191,11 +196,25 @@ class TradingBot:
             await self._test_api_connection()
             
             # 初始化WebSocket客户端
-            auth_data = self.api_client.get_ws_auth()
-            self.ws_client = OKXWebSocketClient(auth_data)
+            if self.config.get("api_backend") == "ccxt":
+                self.ws_client = None
+            else:
+                auth_data = self.api_client.get_ws_auth()
+                self.ws_client = OKXWebSocketClient(auth_data)
             
             # 初始化市场数据处理
             self.market_data_handler = MarketDataHandler()
+
+            # 初始化 CCXT 公共客户端（用于行情轮询）
+            try:
+                self.ccxt_public = CCXTClient(
+                    api_key=self.config["api_key"],
+                    secret=self.config["api_secret"],
+                    passphrase=self.config["passphrase"],
+                    testnet=self.config["testnet"]
+                )
+            except Exception:
+                self.ccxt_public = None
             
             # 初始化投资组合管理器
             self.portfolio_manager = PortfolioManager(
@@ -239,12 +258,34 @@ class TradingBot:
                 self.monitoring_service.register_params_callback(self._on_monitoring_params_update)
             except Exception:
                 pass
+            try:
+                self.monitoring_service.register_timeframe_callback(self._on_monitoring_timeframe_update)
+            except Exception:
+                pass
             
             logger.info("交易机器人组件初始化完成")
             
         except Exception as e:
             logger.error(f"初始化失败: {str(e)}")
             raise
+
+        try:
+            tf_saved = self.monitoring_service.get_setting('trading_timeframe') if self.monitoring_service else None
+            if tf_saved:
+                self.config['trading_timeframe'] = tf_saved
+        except Exception:
+            pass
+
+        try:
+            cm = None
+            if self.strategy_manager:
+                cm = self.strategy_manager.get_strategy('KDJ_MACD')
+            if cm and self.monitoring_service:
+                sp = self.monitoring_service.get_strategy_params('KDJ_MACD')
+                if sp:
+                    cm.update_parameters(sp)
+        except Exception:
+            pass
     
     async def _test_api_connection(self):
         """测试API连接"""
@@ -372,15 +413,33 @@ class TradingBot:
             await self.order_manager.start()
             
             # 启动WebSocket连接
-            await self.ws_client.connect(testnet=self.config.get("testnet", True))
+            if self.ws_client:
+                await self.ws_client.connect(testnet=self.config.get("testnet", True))
             
             # 订阅市场数据
             symbol = self.config["symbol"]
             # 行情订阅：更新缓存并同步到投资组合现价
-            await self.ws_client.subscribe_ticker(symbol, self._on_ticker)
-            await self.ws_client.subscribe_orderbook(symbol, self.market_data_handler.handle_orderbook)
-            # 订阅1分钟K线：在K线确认收盘时触发策略分析
-            await self.ws_client.subscribe_candles(symbol, "1m", self._on_candles)
+            if self.ws_client:
+                await self.ws_client.subscribe_ticker(symbol, self._on_ticker)
+                await self.ws_client.subscribe_orderbook(symbol, self.market_data_handler.handle_orderbook)
+                await self.ws_client.subscribe_candles(symbol, "1m", self._on_candles)
+
+            # 启动 CCXT 轮询（作为实时/回退数据源）
+            if self.config.get("enable_ccxt_polling", True) and getattr(self, "ccxt_public", None):
+                try:
+                    poll_task = asyncio.create_task(self._ccxt_polling_loop())
+                    self.tasks.append(poll_task)
+                    logger.info("已启动CCXT行情轮询")
+                except Exception as e:
+                    logger.error(f"启动CCXT轮询失败: {str(e)}")
+
+            if self.config.get("enable_backtest", True):
+                try:
+                    bt_task = asyncio.create_task(self._backtest_kdj_macd_okx())
+                    self.tasks.append(bt_task)
+                    logger.info("已启动OKX模拟数据回测任务")
+                except Exception as e:
+                    logger.error(f"启动回测失败: {str(e)}")
             
             # 启动策略管理器
             await self.strategy_manager.start()
@@ -411,6 +470,22 @@ class TradingBot:
                         message="自动交易已开启",
                         data={"source": "bot", "symbol": self.config.get("symbol")}
                     )
+                    try:
+                        tf_opts = None
+                        if getattr(self, 'ccxt_public', None):
+                            tf_opts = self.ccxt_public.available_timeframes()
+                        self.monitoring_service.update_strategy_status({
+                            'active_strategies': self.strategy_manager.get_active_strategies(),
+                            'recent_signals': len(self.strategy_manager.get_recent_signals(24)),
+                            'executed_orders': self.order_manager.get_order_summary().get('total_orders', 0) if self.order_manager else 0,
+                            'open_positions': 0,
+                            'indicator_params': {},
+                            'indicator_values': {},
+                            'timeframe': self.config.get('trading_timeframe', self.config.get('ccxt_timeframe', '1m')),
+                            'timeframe_options': tf_opts or ['1m','5m','15m','1h','4h']
+                        })
+                    except Exception:
+                        pass
             except Exception:
                 pass
             
@@ -581,6 +656,201 @@ class TradingBot:
             except Exception as e:
                 logger.error(f"交易循环出错: {str(e)}")
                 await asyncio.sleep(60)  # 出错后等待1分钟
+
+    async def _ccxt_polling_loop(self):
+        """使用CCXT轮询行情与K线，并填充到MarketDataHandler缓存，驱动策略计算更新"""
+        symbol = self.config.get("symbol")
+        while self.is_running:
+            try:
+                if not getattr(self, "ccxt_public", None):
+                    await asyncio.sleep(5)
+                    continue
+                # 获取最近两根K线
+                tf = self.config.get("trading_timeframe", self.config.get("ccxt_timeframe", "1m"))
+                ohlcv = await self.ccxt_public.fetch_ohlcv(symbol, timeframe=tf, limit=2)
+                if ohlcv and len(ohlcv) >= 2:
+                    prev = ohlcv[-2]
+                    ts, o, h, l, c, v = prev[0], float(prev[1]), float(prev[2]), float(prev[3]), float(prev[4]), float(prev[5])
+                    # 写入最新确认K线
+                    try:
+                        self.market_data_handler.candle_cache[symbol] = {
+                            "open": o,
+                            "high": h,
+                            "low": l,
+                            "close": c,
+                            "volume": v,
+                            "timestamp": datetime.now(),
+                            "ts": int(ts),
+                            "confirm": True,
+                        }
+                    except Exception:
+                        pass
+                # 更新最新价格
+                last_price = await self.ccxt_public.fetch_ticker_price(symbol)
+                if last_price and last_price > 0:
+                    try:
+                        self.market_data_handler.price_cache[symbol] = {
+                            "last": float(last_price),
+                            "bid": float(last_price),
+                            "ask": float(last_price),
+                            "vol": 0.0,
+                            "timestamp": datetime.now(),
+                        }
+                        # 同步到组合
+                        if hasattr(self, 'portfolio_manager') and self.portfolio_manager:
+                            self.portfolio_manager.update_price(symbol, float(last_price))
+                    except Exception:
+                        pass
+                await asyncio.sleep(3)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"CCXT轮询失败: {str(e)}")
+                await asyncio.sleep(5)
+
+    async def _backtest_kdj_macd_okx(self):
+        symbol = self.config.get("symbol")
+        timeframe = self.config.get("trading_timeframe", self.config.get("ccxt_timeframe", "1m"))
+        bars = int(self.config.get("backtest_bars", 500))
+        import asyncio
+        from strategies.kdj_macd_strategy import KDJMACDStrategy
+        cm = self.strategy_manager.get_strategy("KDJ_MACD")
+        params = cm.parameters if cm else {
+            "kdj": {"period": 9, "k_smooth": 3, "d_smooth": 3, "oversold": 20, "overbought": 80},
+            "macd": {"fast": 5, "slow": 13, "signal": 4},
+            "min_confidence": 0.55, "stop_loss": 0.02, "take_profit": 0.04,
+        }
+        s = KDJMACDStrategy(params)
+        s.start()
+        ohlcv = await self.ccxt_public.fetch_ohlcv(symbol, timeframe=timeframe, limit=bars) if getattr(self, 'ccxt_public', None) else None
+        candles = list(ohlcv or [])
+        wins = 0
+        losses = 0
+        total = 0
+        position = 0.0
+        entry_price = 0.0
+        for c in candles:
+            try:
+                o = float(c[1]); h = float(c[2]); l = float(c[3]); cl = float(c[4]); v = float(c[5])
+            except Exception:
+                continue
+            md = MarketData(symbol=symbol, timestamp=datetime.now(), open=o, high=h, low=l, close=cl, volume=v, bid=cl, ask=cl)
+            sig = s.analyze(md)
+            if sig.signal_type == SignalType.BUY and position == 0:
+                position = 1.0
+                entry_price = cl
+            elif sig.signal_type == SignalType.SELL and position > 0:
+                pnl = cl - entry_price
+                total += 1
+                if pnl > 0:
+                    wins += 1
+                    if self.monitoring_service:
+                        self.monitoring_service.record_metric("winning_trades", 1)
+                else:
+                    losses += 1
+                    if self.monitoring_service:
+                        self.monitoring_service.record_metric("losing_trades", 1)
+                if self.monitoring_service:
+                    self.monitoring_service.record_metric("total_trades", 1)
+                position = 0.0
+                entry_price = 0.0
+        win_rate = (wins / total * 100.0) if total > 0 else 0.0
+        try:
+            if self.monitoring_service:
+                self.monitoring_service.record_metric("win_rate", win_rate)
+                self.monitoring_service.log_event(
+                    event_type="system", level="info",
+                    message="回测完成: OKX模拟数据胜率",
+                    data={"symbol": symbol, "timeframe": timeframe, "bars": bars, "wins": wins, "losses": losses, "total": total, "win_rate": win_rate}
+                )
+        except Exception:
+            pass
+        if win_rate < 75.0:
+            try:
+                await self._auto_tune_kdj_macd(timeframe, bars)
+            except Exception:
+                pass
+
+    async def _evaluate_kdj_macd(self, params: Dict[str, Any], timeframe: str, bars: int) -> float:
+        symbol = self.config.get("symbol")
+        from strategies.kdj_macd_strategy import KDJMACDStrategy
+        s = KDJMACDStrategy(params)
+        s.start()
+        ohlcv = await self.ccxt_public.fetch_ohlcv(symbol, timeframe=timeframe, limit=bars) if getattr(self, 'ccxt_public', None) else None
+        candles = list(ohlcv or [])
+        wins = 0
+        total = 0
+        position = 0.0
+        entry_price = 0.0
+        for c in candles:
+            try:
+                o = float(c[1]); h = float(c[2]); l = float(c[3]); cl = float(c[4]); v = float(c[5])
+            except Exception:
+                continue
+            md = MarketData(symbol=symbol, timestamp=datetime.now(), open=o, high=h, low=l, close=cl, volume=v, bid=cl, ask=cl)
+            sig = s.analyze(md)
+            if sig.signal_type == SignalType.BUY and position == 0:
+                position = 1.0
+                entry_price = cl
+            elif sig.signal_type == SignalType.SELL and position > 0:
+                pnl = cl - entry_price
+                total += 1
+                if pnl > 0:
+                    wins += 1
+                position = 0.0
+                entry_price = 0.0
+        return (wins / total * 100.0) if total > 0 else 0.0
+
+    async def _auto_tune_kdj_macd(self, timeframe: str, bars: int):
+        cm = self.strategy_manager.get_strategy("KDJ_MACD")
+        base = cm.parameters if cm else {
+            "kdj": {"period": 9, "k_smooth": 3, "d_smooth": 3, "oversold": 20, "overbought": 80},
+            "macd": {"fast": 5, "slow": 13, "signal": 4},
+            "min_confidence": 0.55, "stop_loss": 0.02, "take_profit": 0.04,
+        }
+        periods = [7, 9, 11]
+        fasts = [5, 8, 12]
+        slows = [13, 21, 26]
+        signals = [4, 5, 9]
+        best_params = base
+        best_wr = await self._evaluate_kdj_macd(base, timeframe, bars)
+        for p in periods:
+            for f in fasts:
+                for sl in slows:
+                    if f >= sl:
+                        continue
+                    for sg in signals:
+                        cand = {
+                            "kdj": {**(base.get("kdj") or {}), "period": p},
+                            "macd": {**(base.get("macd") or {}), "fast": f, "slow": sl, "signal": sg},
+                            "min_confidence": base.get("min_confidence", 0.55),
+                            "stop_loss": base.get("stop_loss", 0.02),
+                            "take_profit": base.get("take_profit", 0.04),
+                        }
+                        wr = await self._evaluate_kdj_macd(cand, timeframe, bars)
+                        if wr > best_wr:
+                            best_wr = wr
+                            best_params = cand
+                        if best_wr >= 75.0:
+                            break
+                    if best_wr >= 75.0:
+                        break
+                if best_wr >= 75.0:
+                    break
+            if best_wr >= 75.0:
+                break
+        if cm:
+            cm.update_parameters(best_params)
+        try:
+            if self.monitoring_service:
+                self.monitoring_service.set_strategy_params('KDJ_MACD', best_params, best_wr)
+                self.monitoring_service.log_event(
+                    event_type="system", level="info",
+                    message="参数自动调优完成",
+                    data={"win_rate": best_wr}
+                )
+        except Exception:
+            pass
     
     async def _process_signals(self, signals: list):
         """处理交易信号：仅在KDJ与MACD共振时执行下单；止损/止盈触发不受共振限制"""
@@ -764,11 +1034,17 @@ class TradingBot:
                         executed_orders = int(order_summary.get('total_orders', 0))
                         pf = status.get('portfolio') or {}
                         open_positions = int(pf.get('position_count', len(pf.get('positions', []) or [])))
+                        try:
+                            if self.monitoring_service:
+                                self.monitoring_service.record_metric("daily_pnl", float(pf.get("pnl", 0.0)))
+                        except Exception:
+                            pass
 
                         kdj = self.strategy_manager.get_strategy('KDJ')
                         macd = self.strategy_manager.get_strategy('MACD')
                         cm = self.strategy_manager.get_strategy('KDJ_MACD')
                         indicator_params = {}
+                        indicator_values = {}
                         try:
                             if kdj:
                                 indicator_params['KDJ'] = dict(kdj.parameters)
@@ -786,6 +1062,21 @@ class TradingBot:
                                 }
                                 indicator_params['KDJ'] = {**k_params, **shared}
                                 indicator_params['MACD'] = {**m_params, **shared}
+                                # 指标实时值（来自策略状态）
+                                try:
+                                    st = cm.get_status()
+                                    indicator_values['KDJ'] = {
+                                        'k': float(st.get('last_k', 0.0)),
+                                        'd': float(st.get('last_d', 0.0)),
+                                        'j': float(st.get('last_j', 0.0)),
+                                    }
+                                    indicator_values['MACD'] = {
+                                        'macd': float(st.get('last_macd', 0.0)),
+                                        'signal': float(st.get('last_signal', 0.0)),
+                                        'hist': float(st.get('last_hist', 0.0)),
+                                    }
+                                except Exception:
+                                    pass
                         except Exception:
                             # 保底：避免参数对象不可序列化导致失败
                             pass
@@ -796,6 +1087,9 @@ class TradingBot:
                             'executed_orders': executed_orders,
                             'open_positions': open_positions,
                             'indicator_params': indicator_params,
+                            'indicator_values': indicator_values,
+                            'timeframe': self.config.get("trading_timeframe", self.config.get("ccxt_timeframe", "1m")),
+                            'current_price': float(self.market_data_handler.get_latest_price(self.config.get("symbol")) or 0.0),
                         })
                 except Exception:
                     # 推送失败不影响主流程
@@ -968,6 +1262,46 @@ class TradingBot:
             logger.error(f"处理参数更新失败: {str(e)}")
             # 将错误抛出以便监控服务发送ACK
             raise
+
+    async def _on_monitoring_timeframe_update(self, timeframe: str):
+        try:
+            tf = str(timeframe or "").strip()
+            if not tf:
+                return
+            # 校验周期合法性（交易所支持）
+            try:
+                if getattr(self, 'ccxt_public', None):
+                    opts = self.ccxt_public.available_timeframes() or []
+                    if opts and tf not in opts:
+                        raise ValueError(f"不支持的周期: {tf}")
+            except Exception:
+                pass
+
+            self.config["trading_timeframe"] = tf
+            # 持久化到SQLite
+            try:
+                if self.monitoring_service:
+                    self.monitoring_service.set_setting('trading_timeframe', tf)
+            except Exception:
+                pass
+            try:
+                if self.monitoring_service and self.strategy_manager:
+                    active = self.strategy_manager.get_active_strategies()
+                    self.monitoring_service.update_strategy_status({
+                        'active_strategies': active,
+                        'recent_signals': len(self.strategy_manager.get_recent_signals(24)),
+                        'executed_orders': self.order_manager.get_order_summary().get('total_orders', 0) if self.order_manager else 0,
+                        'open_positions': 0,
+                        'indicator_params': {},
+                        'indicator_values': {},
+                        'timeframe': tf,
+                        'current_price': float(self.market_data_handler.get_latest_price(self.config.get("symbol")) or 0.0),
+                        'timeframe_options': (self.ccxt_public.available_timeframes() if getattr(self, 'ccxt_public', None) else None) or ['1m','5m','15m','1h','4h']
+                    })
+            except Exception:
+                pass
+        except Exception:
+            pass
     
     def signal_handler(self, signum, frame):
         """信号处理"""

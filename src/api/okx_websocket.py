@@ -21,18 +21,25 @@ class OKXWebSocketClient:
         self.subscriptions = set()
         self.callbacks = {}
         self.reconnect_interval = 5  # 重连间隔（秒）
+        self._testnet = True
         
     async def connect(self, testnet: bool = True):
         """连接到WebSocket服务器"""
-        url = "wss://wspap.okx.com:8443/ws/v5/public" if testnet else "wss://ws.okx.com:8443/ws/v5/public"
+        self._testnet = bool(testnet)
+        url = "wss://wspap.okx.com:8443/ws/v5/public" if self._testnet else "wss://ws.okx.com:8443/ws/v5/public"
         
         # 在模拟交易模式下，部分环境需要在WebSocket握手时附带 x-simulated-trading 标头
-        extra_headers = {"x-simulated-trading": "1"} if testnet else None
+        headers = [("x-simulated-trading", "1")] if self._testnet else None
         
         try:
-            # websockets.connect 支持 extra_headers 传递额外HTTP头
-            if extra_headers:
-                self.ws = await websockets.connect(url, extra_headers=extra_headers)
+            # websockets.connect 支持 extra_headers 传递额外HTTP头（不同版本参数校验可能差异，加入兼容回退）
+            if headers:
+                try:
+                    self.ws = await websockets.connect(url, extra_headers=headers)
+                except TypeError:
+                    # 回退：不带额外头部尝试连接
+                    logger.warning("WebSocket不支持extra_headers参数，尝试无额外头部连接")
+                    self.ws = await websockets.connect(url)
             else:
                 self.ws = await websockets.connect(url)
             self.is_connected = True
@@ -73,7 +80,7 @@ class OKXWebSocketClient:
         await asyncio.sleep(self.reconnect_interval)
         
         try:
-            await self.connect()
+            await self.connect(self._testnet)
             # 重新订阅之前的频道
             for channel in self.subscriptions:
                 await self.subscribe(channel)

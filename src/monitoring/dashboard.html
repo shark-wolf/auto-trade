@@ -279,9 +279,9 @@
             background: #fff;
             border-radius: 10px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.22);
-            width: 640px;
+            width: clamp(360px, 80vw, 800px);
             max-width: calc(100% - 40px);
-            max-height: 80vh;
+            max-height: 85vh;
             overflow: auto;
             transform: translateY(6px) scale(0.98);
             opacity: 0;
@@ -404,6 +404,9 @@
             <span style="margin-left:10px"></span>
             <button class="btn" onclick="startAutoTrading()">▶️ 开始自动交易</button>
             <button class="btn btn-danger" onclick="stopAutoTrading()">⏸️ 停止自动交易</button>
+            <span style="margin-left:10px"></span>
+            <label style="color:#fff; margin-right:6px;">周期</label>
+            <select id="tfSelect" onchange="updateTimeframe()"></select>
         </div>
 
         <div class="dashboard">
@@ -417,6 +420,10 @@
                 <div class="metric">
                     <span class="metric-label">当前策略</span>
                     <span class="metric-value neutral" id="activeStrategyList">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">当前周期</span>
+                    <span class="metric-value neutral" id="currentTimeframe">--</span>
                 </div>
                 <div class="metric">
                     <span class="metric-label">今日信号数</span>
@@ -434,7 +441,7 @@
 
             <!-- 🧭 指标参数（与策略状态并列） -->
             <div class="card">
-                <h3>🧭 指标参数</h3>
+                <h3>🧭 指标参数与当前值</h3>
                 <div class="param-group">
                     <div class="param-group-title">KDJ 参数</div>
                     <div class="param-chips" id="kdjParamChips"><span class="param-empty">--</span></div>
@@ -442,6 +449,14 @@
                 <div class="param-group">
                     <div class="param-group-title">MACD 参数</div>
                     <div class="param-chips" id="macdParamChips"><span class="param-empty">--</span></div>
+                </div>
+                <div class="param-group" style="margin-top:12px">
+                    <div class="param-group-title">KDJ 当前值</div>
+                    <div class="param-chips" id="kdjValueChips"><span class="param-empty">--</span></div>
+                </div>
+                <div class="param-group">
+                    <div class="param-group-title">MACD 当前值</div>
+                    <div class="param-chips" id="macdValueChips"><span class="param-empty">--</span></div>
                 </div>
                 <div class="param-actions" style="border-top: 1px solid #ecf0f1; padding-top: 10px;">
                     <button class="btn" onclick="openParamModal()">设置参数（弹窗）</button>
@@ -591,11 +606,7 @@
                 <div class="modal-body">
                     <div class="form-row">
                         <label>目标策略</label>
-                        <select id="modalStrategy" onchange="renderParamFields()">
-                            <option value="KDJ_MACD">KDJ_MACD（组合）</option>
-                            <option value="KDJ">KDJ</option>
-                            <option value="MACD">MACD</option>
-                        </select>
+                        <select id="modalStrategy" onchange="renderParamFields()"></select>
                     </div>
                     <div id="paramFieldsContainer"></div>
                 </div>
@@ -634,7 +645,7 @@
                 try {
                     // 使用原生WebSocket连接到服务器（支持通过查询参数覆盖端口/主机）
                     const params = new URLSearchParams(window.location.search);
-                    const wsPort = Number(params.get('ws_port')) || 8766;
+                    const wsPort = Number(params.get('ws_port')) || 8765;
                     const wsHost = params.get('ws_host') || '127.0.0.1';
                     this.socket = new WebSocket(`ws://${wsHost}:${wsPort}`);
 
@@ -653,14 +664,33 @@
                         }, 1000);
                     };
 
-                this.socket.onmessage = (event) => {
-                    try {
-                        const data = JSON.parse(event.data);
-                        // 控制指令反馈
-                        if (data.type === 'ack' && data.action) {
-                            this.logEvent('系统', `后端已处理控制指令: ${data.action}`, 'success');
-                            return;
-                        }
+                    this.socket.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            if (data.type === 'ack' && data.action) {
+                                if (data.action === 'timeframe') {
+                                    const sel = document.getElementById('tfSelect');
+                                    if (sel) sel.disabled = false;
+                                    if (data.status === 'ok') {
+                                        const tf = String(data.timeframe || '');
+                                        if (tf) {
+                                            const el = document.getElementById('currentTimeframe');
+                                            if (el) el.textContent = tf;
+                                            if (sel) sel.value = tf;
+                                        }
+                                        this.logEvent('系统', '周期更新成功', 'success');
+                                    } else {
+                                        const prev = window.prevTf;
+                                        if (sel && prev) sel.value = prev;
+                                        this.logEvent('系统', `周期更新失败: ${data.error || ''}`, 'error');
+                                    }
+                                    window.prevTf = undefined;
+                                    return;
+                                } else {
+                                    this.logEvent('系统', `后端已处理控制指令: ${data.action}`, 'success');
+                                    return;
+                                }
+                            }
                             // 服务器发送的是完整的仪表板数据，需要解析并更新各个组件
                             if (data.system_status) {
                                 this.updateSystemStatus(data.system_status);
@@ -676,6 +706,10 @@
                                 const ip = data.strategy_status.indicator_params;
                                 if (ip) {
                                     this.updateIndicatorParams(ip);
+                                }
+                                const iv = data.strategy_status.indicator_values;
+                                if (iv) {
+                                    this.updateIndicatorValues(iv);
                                 }
                             }
                             if (data.portfolio_status) {
@@ -773,6 +807,43 @@
                 document.getElementById('signalsToday').textContent = data.recent_signals;
                 document.getElementById('executedOrders').textContent = data.executed_orders;
                 document.getElementById('openPositions').textContent = data.open_positions;
+                try {
+                    document.getElementById('currentTimeframe').textContent = String(data.timeframe || '1m');
+                    const sel = document.getElementById('tfSelect');
+                    if (sel && data.timeframe) sel.value = String(data.timeframe);
+                    const opts = Array.isArray(data.timeframe_options) ? data.timeframe_options : null;
+                    if (sel && opts && opts.length) {
+                        const prev = sel.value;
+                        sel.innerHTML = '';
+                        opts.forEach(o => {
+                            const opt = document.createElement('option');
+                            opt.value = o;
+                            opt.textContent = tfLabel(o);
+                            sel.appendChild(opt);
+                        });
+                        if (prev && opts.includes(prev)) sel.value = prev; else if (data.timeframe) sel.value = String(data.timeframe);
+                    }
+                } catch (_) {}
+                try {
+                    const cp = Number(data.current_price ?? 0);
+                    const el = document.getElementById('currentPrice');
+                    if (el) {
+                        el.textContent = this.formatCurrency(cp);
+                        const prev = Number(window.lastPrice ?? 0);
+                        let cls = 'neutral';
+                        if (prev > 0) {
+                            cls = cp > prev ? 'positive' : cp < prev ? 'negative' : 'neutral';
+                        }
+                        el.className = `metric-value ${cls}`;
+                        window.lastPrice = cp;
+                    }
+                } catch (_) {}
+
+                // 记录活跃策略并更新弹窗选项
+                try {
+                    window.activeStrategies = strategies;
+                    updateStrategyOptions(strategies);
+                } catch (_) {}
             }
 
             updateIndicatorParams(params) {
@@ -785,6 +856,18 @@
                     window.currentIndicatorParams = params;
                     prefillParamForm(params);
                 } catch (_) {}
+            }
+
+            updateIndicatorValues(values) {
+                try {
+                    const kdj = values && values.KDJ ? values.KDJ : null;
+                    const macd = values && values.MACD ? values.MACD : null;
+                    renderParamChips('kdjValueChips', kdj);
+                    renderParamChips('macdValueChips', macd);
+                } catch (_) {
+                    renderParamChips('kdjValueChips', null);
+                    renderParamChips('macdValueChips', null);
+                }
             }
 
             formatParams(obj) {
@@ -855,12 +938,19 @@
                     data: {
                         labels: [],
                         datasets: [{
-                            label: '累计盈亏',
+                            label: '盈亏',
                             data: [],
                             borderColor: '#3498db',
                             backgroundColor: 'rgba(52, 152, 219, 0.1)',
                             fill: true,
                             tension: 0.4
+                        },{
+                            label: '移动平均',
+                            data: [],
+                            borderColor: '#2ecc71',
+                            backgroundColor: 'rgba(46, 204, 113, 0.08)',
+                            fill: false,
+                            tension: 0.3
                         }]
                     },
                     options: {
@@ -912,8 +1002,23 @@
             updateCharts(data) {
                 // 更新盈亏趋势图
                 if (data.pnl_history && data.pnl_history.length > 0) {
-                    this.charts.pnl.data.labels = data.pnl_history.map((_, index) => index + 1);
+                    const labels = Array.isArray(data.pnl_labels) && data.pnl_labels.length === data.pnl_history.length
+                        ? data.pnl_labels
+                        : data.pnl_history.map((_, index) => index + 1);
+                    this.charts.pnl.data.labels = labels;
                     this.charts.pnl.data.datasets[0].data = data.pnl_history;
+                    try {
+                        const win = 10;
+                        const arr = data.pnl_history;
+                        const ma = [];
+                        let sum = 0;
+                        for (let i = 0; i < arr.length; i++) {
+                            sum += Number(arr[i] || 0);
+                            if (i >= win) sum -= Number(arr[i - win] || 0);
+                            ma.push(i >= win - 1 ? (sum / win) : null);
+                        }
+                        this.charts.pnl.data.datasets[1].data = ma;
+                    } catch (_) {}
                     this.charts.pnl.update();
                 }
 
@@ -984,6 +1089,25 @@
         }
 
         // 渲染参数为徽章 chips（全局函数）
+        const LABEL_MAP = {
+            period: '周期',
+            k_smooth: 'K平滑',
+            d_smooth: 'D平滑',
+            oversold: '超卖阈值',
+            overbought: '超买阈值',
+            fast: '快线周期',
+            slow: '慢线周期',
+            signal: '信号线周期',
+            stop_loss: '止损比例',
+            take_profit: '止盈比例',
+            min_confidence: '最小置信度',
+            k: 'K值',
+            d: 'D值',
+            j: 'J值',
+            macd: 'DIF',
+            hist: '柱体'
+        };
+        function labelOf(k) { return LABEL_MAP[k] || k; }
         function renderParamChips(containerId, obj) {
             const container = document.getElementById(containerId);
             if (!container) return;
@@ -995,12 +1119,12 @@
                     return;
                 }
                 // 固定顺序优先（如果存在）
-                const order = ['period','k_smooth','d_smooth','oversold','overbought','fast','slow','signal','stop_loss','take_profit','min_confidence'];
+                const order = ['period','k_smooth','d_smooth','oversold','overbought','fast','slow','signal','stop_loss','take_profit','min_confidence','k','d','j','macd','signal','hist'];
                 entries.sort((a,b) => order.indexOf(a[0]) - order.indexOf(b[0]));
                 entries.forEach(([k, v]) => {
                     const chip = document.createElement('span');
                     chip.className = 'param-chip';
-                    chip.innerHTML = `<span class="chip-key">${k}</span><span class="chip-value">${v}</span>`;
+                    chip.innerHTML = `<span class="chip-key">${labelOf(k)}</span><span class="chip-value">${v}</span>`;
                     container.appendChild(chip);
                 });
             } catch (e) {
@@ -1074,6 +1198,10 @@
                 requestAnimationFrame(() => { modal.classList.add('animate-in'); });
             }
             // 渲染字段
+            try {
+                const strategies = window.activeStrategies || [];
+                updateStrategyOptions(strategies);
+            } catch (_) {}
             renderParamFields();
             // 点击遮罩关闭
             overlay.addEventListener('click', (e) => {
@@ -1094,7 +1222,8 @@
         function renderParamFields() {
             const container = document.getElementById('paramFieldsContainer');
             container.innerHTML = '';
-            const strategy = document.getElementById('modalStrategy').value || 'KDJ_MACD';
+            const selectEl = document.getElementById('modalStrategy');
+            const strategy = (selectEl && selectEl.value) || 'KDJ_MACD';
             const current = window.currentIndicatorParams || {};
 
             const addGroup = (title, defs, values) => {
@@ -1106,7 +1235,7 @@
                     const row = document.createElement('div');
                     row.className = 'form-row';
                     const label = document.createElement('label');
-                    label.textContent = def.key;
+                    label.textContent = labelOf(def.key);
                     const input = document.createElement('input');
                     input.type = def.type || 'number';
                     if (def.step !== undefined) input.step = String(def.step);
@@ -1133,6 +1262,42 @@
                 addGroup('MACD', PARAM_DEFS.MACD, current.MACD || {});
                 addGroup('COMMON', PARAM_DEFS.COMMON, current.MACD || {});
             }
+        }
+
+        function updateStrategyOptions(active) {
+            try {
+                const selectEl = document.getElementById('modalStrategy');
+                if (!selectEl) return;
+                const prev = selectEl.value;
+                const opts = [];
+                // 优先合并策略
+                if (active && active.includes('KDJ_MACD')) {
+                    opts.push({ value: 'KDJ_MACD', label: 'KDJ_MACD（组合）' });
+                }
+                // 单独策略
+                if (active && active.includes('KDJ')) {
+                    opts.push({ value: 'KDJ', label: 'KDJ' });
+                }
+                if (active && active.includes('MACD')) {
+                    opts.push({ value: 'MACD', label: 'MACD' });
+                }
+                // 兜底：至少提供组合策略
+                if (!opts.length) {
+                    opts.push({ value: 'KDJ_MACD', label: 'KDJ_MACD（组合）' });
+                }
+                // 重建选项
+                selectEl.innerHTML = '';
+                opts.forEach(o => {
+                    const opt = document.createElement('option');
+                    opt.value = o.value;
+                    opt.textContent = o.label;
+                    selectEl.appendChild(opt);
+                });
+                // 保留之前的选择
+                if (prev && opts.some(o => o.value === prev)) {
+                    selectEl.value = prev;
+                }
+            } catch (_) {}
         }
 
         function readNumber(id) {
@@ -1202,6 +1367,28 @@
                 dashboard.logEvent('系统', `已发送控制指令: ${action}`, 'info');
             } catch (e) {
                 dashboard.logEvent('错误', `发送控制指令失败: ${e.message}`, 'error');
+            }
+        }
+
+        function tfLabel(tf) {
+            const map = { '1m': '1分钟', '5m': '5分钟', '15m': '15分钟', '1h': '1小时', '4h': '4小时' };
+            return map[tf] || tf;
+        }
+
+        function updateTimeframe() {
+            try {
+                if (!dashboard || !dashboard.socket || dashboard.socket.readyState !== WebSocket.OPEN) {
+                    dashboard && dashboard.logEvent('系统', '未连接监控服务，无法更新周期', 'warning');
+                    return;
+                }
+                const sel = document.getElementById('tfSelect');
+                const tf = sel.value;
+                window.prevTf = sel.value;
+                sel.disabled = true;
+                dashboard.socket.send(JSON.stringify({ type: 'timeframe', timeframe: tf }));
+                dashboard.logEvent('系统', `已发送周期更新: ${tf}`, 'info');
+            } catch (e) {
+                dashboard.logEvent('错误', `发送周期更新失败: ${e.message}`, 'error');
             }
         }
 

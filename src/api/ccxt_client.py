@@ -46,6 +46,32 @@ class CCXTClient:
         except Exception:
             return symbol
 
+    async def fetch_ticker_price(self, symbol: str) -> Optional[float]:
+        try:
+            market = self._convert_symbol(symbol)
+            t = await self.exchange.fetch_ticker(market)
+            last = t.get('last') if isinstance(t, dict) else None
+            return float(last) if last is not None else None
+        except Exception:
+            return None
+
+    async def fetch_ohlcv(self, symbol: str, timeframe: str = '1m', limit: int = 2) -> Optional[list]:
+        try:
+            market = self._convert_symbol(symbol)
+            data = await self.exchange.fetch_ohlcv(market, timeframe=timeframe, limit=limit)
+            return data
+        except Exception:
+            return None
+
+    def available_timeframes(self) -> Optional[list]:
+        try:
+            tf = getattr(self.exchange, 'timeframes', None)
+            if isinstance(tf, dict):
+                return list(tf.keys())
+            return None
+        except Exception:
+            return None
+
     async def place_order(self, symbol: str, side: str, order_type: str, size: float,
                           price: Optional[float] = None, pos_side: Optional[str] = None) -> Dict[str, Any]:
         market = self._convert_symbol(symbol)

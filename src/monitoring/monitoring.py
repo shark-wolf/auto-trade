@@ -370,7 +370,9 @@ class MonitoringDashboard:
 
         # 历史PnL（最近50条）
         pnl_metrics = self.metrics_collector.metrics.get("daily_pnl", [])
-        pnl_history = [m.value for m in pnl_metrics][-50:] if pnl_metrics else []
+        recent = list(pnl_metrics)[-50:] if pnl_metrics else []
+        pnl_history = [m.value for m in recent]
+        pnl_labels = [m.timestamp.strftime("%H:%M:%S") for m in recent]
 
         return {
             "total_trades": get_agg_count("total_trades"),
@@ -378,8 +380,9 @@ class MonitoringDashboard:
             "total_pnl": get_agg_sum("daily_pnl"),
             "sharpe_ratio": get_agg_avg("sharpe_ratio"),
             "pnl_history": pnl_history,
-            "winning_trades": 0,
-            "losing_trades": 0
+            "pnl_labels": pnl_labels,
+            "winning_trades": get_agg_count("winning_trades"),
+            "losing_trades": get_agg_count("losing_trades")
         }
 
     def _get_risk_metrics(self) -> Dict[str, Any]:
@@ -463,6 +466,7 @@ class MonitoringService:
         self.control_callback = None
         # 参数更新回调（由交易机器人注册，用于处理指标参数更新）
         self.params_callback = None
+        self.timeframe_callback = None
         
         # 数据库连接
         self.db_connection = None
@@ -482,6 +486,11 @@ class MonitoringService:
         except Exception:
             # 保底防护，避免异常导致整个监控失败
             self.portfolio_status = {}
+        try:
+            import asyncio
+            asyncio.create_task(self._broadcast_dashboard())
+        except Exception:
+            pass
 
     def update_strategy_status(self, status: Dict[str, Any]):
         """更新外部传入的策略状态（包含活动策略与指标参数）"""
@@ -489,6 +498,11 @@ class MonitoringService:
             self.strategy_status = status or {}
         except Exception:
             self.strategy_status = {}
+        try:
+            import asyncio
+            asyncio.create_task(self._broadcast_dashboard())
+        except Exception:
+            pass
     
     def _initialize_database(self):
         """初始化数据库"""
@@ -534,10 +548,76 @@ class MonitoringService:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_timestamp ON trading_events(timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_type ON trading_events(event_type)")
             
+            # 设置表：持久化配置（key-value）
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS strategy_params (
+                    strategy TEXT PRIMARY KEY,
+                    params TEXT NOT NULL,
+                    win_rate REAL DEFAULT 0,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+
             self.db_connection.commit()
             
         except Exception as e:
             logger.error(f"初始化数据库失败: {str(e)}")
+
+    def get_setting(self, key: str) -> Optional[str]:
+        try:
+            cursor = self.db_connection.cursor()
+            cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+        except Exception:
+            return None
+
+    def set_setting(self, key: str, value: str) -> bool:
+        try:
+            cursor = self.db_connection.cursor()
+            cursor.execute(
+                "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                (key, value)
+            )
+            self.db_connection.commit()
+            return True
+        except Exception:
+            return False
+
+    def get_strategy_params(self, strategy: str) -> Optional[Dict[str, Any]]:
+        try:
+            cursor = self.db_connection.cursor()
+            cursor.execute("SELECT params FROM strategy_params WHERE strategy = ?", (strategy,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return json.loads(row[0])
+        except Exception:
+            return None
+
+    def set_strategy_params(self, strategy: str, params: Dict[str, Any], win_rate: float = 0.0) -> bool:
+        try:
+            cursor = self.db_connection.cursor()
+            cursor.execute(
+                "INSERT INTO strategy_params(strategy, params, win_rate, updated_at) VALUES(?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(strategy) DO UPDATE SET params=excluded.params, win_rate=excluded.win_rate, updated_at=excluded.updated_at",
+                (strategy, json.dumps(params, ensure_ascii=False), float(win_rate))
+            )
+            self.db_connection.commit()
+            return True
+        except Exception:
+            return False
     
     async def start(self):
         """启动监控服务"""
@@ -749,21 +829,62 @@ class MonitoringService:
                         except Exception:
                             pass
 
-                        # 调用控制回调
+                elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("timeframe", "set_timeframe"):
+                    tf = str(msg.get("timeframe", "")).strip()
+                    try:
                         try:
-                            if callable(self.control_callback):
-                                await self.control_callback(action)
-                        except Exception as e:
-                            logger.error(f"执行控制回调失败: {str(e)}")
-                        # 反馈客户端
+                            self.log_event(
+                                event_type="system",
+                                level="info",
+                                message="收到周期更新",
+                                data={"timeframe": tf}
+                            )
+                        except Exception:
+                            pass
+
+                        if callable(self.timeframe_callback):
+                            result = self.timeframe_callback(tf)
+                            if asyncio.iscoroutine(result):
+                                await result
+
                         try:
                             await websocket.send(json.dumps({
                                 "type": "ack",
-                                "action": action,
-                                "status": "ok"
+                                "action": "timeframe",
+                                "status": "ok",
+                                "timeframe": tf
                             }))
                         except Exception:
                             pass
+
+                    except Exception as e:
+                        logger.error(f"处理周期更新失败: {str(e)}")
+                        try:
+                            await websocket.send(json.dumps({
+                                "type": "ack",
+                                "action": "timeframe",
+                                "status": "error",
+                                "error": str(e)
+                            }))
+                        except Exception:
+                            pass
+
+                else:
+                    action = str(msg.get("action", "")).lower()
+                    try:
+                        if callable(self.control_callback):
+                            await self.control_callback(action)
+                    except Exception as e:
+                        logger.error(f"执行控制回调失败: {str(e)}")
+                    # 反馈客户端
+                    try:
+                        await websocket.send(json.dumps({
+                            "type": "ack",
+                            "action": action,
+                            "status": "ok"
+                        }))
+                    except Exception:
+                        pass
 
         except websockets.exceptions.ConnectionClosed:
             logger.info(f"WebSocket客户端断开连接: {getattr(websocket, 'remote_address', '')}")
@@ -785,12 +906,25 @@ class MonitoringService:
             await self._send_dashboard_once(websocket)
             # 周期推送
             while self.is_running:
-                await asyncio.sleep(5)
+                await asyncio.sleep(2)
                 await self._send_dashboard_once(websocket)
         except asyncio.CancelledError:
             pass
         except Exception as e:
             logger.error(f"WebSocket发送循环错误: {str(e)}")
+
+    async def _broadcast_dashboard(self):
+        try:
+            clients = list(self.ws_clients)
+            if not clients:
+                return
+            for ws in clients:
+                try:
+                    await self._send_dashboard_once(ws)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     async def _send_dashboard_once(self, websocket):
         """构造并发送一次仪表板数据"""
@@ -850,6 +984,9 @@ class MonitoringService:
     def register_params_callback(self, callback):
         """注册参数更新回调，用于处理来自前端的指标参数更新"""
         self.params_callback = callback
+
+    def register_timeframe_callback(self, callback):
+        self.timeframe_callback = callback
 
 
 # 全局监控服务实例

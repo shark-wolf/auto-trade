@@ -11,6 +11,10 @@ from enum import Enum
 import pandas as pd
 import numpy as np
 from loguru import logger
+try:
+    import talib
+except Exception:
+    talib = None
 
 
 class SignalType(Enum):
@@ -239,40 +243,53 @@ def calculate_volatility(prices: pd.Series, window: int = 20) -> float:
 
 
 def calculate_sma(prices: pd.Series, window: int) -> pd.Series:
-    """计算简单移动平均"""
+    if talib is not None:
+        arr = talib.SMA(prices.values.astype(float), timeperiod=window)
+        return pd.Series(arr, index=prices.index)
     return prices.rolling(window=window).mean()
 
 
 def calculate_ema(prices: pd.Series, window: int) -> pd.Series:
-    """计算指数移动平均"""
+    if talib is not None:
+        arr = talib.EMA(prices.values.astype(float), timeperiod=window)
+        return pd.Series(arr, index=prices.index)
     return prices.ewm(span=window).mean()
 
 
 def calculate_rsi(prices: pd.Series, window: int = 14) -> pd.Series:
-    """计算RSI"""
+    if talib is not None:
+        arr = talib.RSI(prices.values.astype(float), timeperiod=window)
+        return pd.Series(arr, index=prices.index)
     returns = calculate_returns(prices)
     gain = returns.where(returns > 0, 0)
     loss = -returns.where(returns < 0, 0)
-    
     avg_gain = gain.rolling(window=window).mean()
     avg_loss = loss.rolling(window=window).mean()
-    
     rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
-    
     return rsi
 
 
 def calculate_macd(prices: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Dict[str, pd.Series]:
-    """计算MACD"""
+    if talib is not None:
+        macd, macdsignal, macdhist = talib.MACD(
+            prices.values.astype(float),
+            fastperiod=fast,
+            slowperiod=slow,
+            signalperiod=signal,
+        )
+        return {
+            "macd": pd.Series(macd, index=prices.index),
+            "signal": pd.Series(macdsignal, index=prices.index),
+            "histogram": pd.Series(macdhist, index=prices.index),
+        }
     ema_fast = calculate_ema(prices, fast)
     ema_slow = calculate_ema(prices, slow)
     macd_line = ema_fast - ema_slow
     signal_line = calculate_ema(macd_line, signal)
     histogram = macd_line - signal_line
-    
     return {
         "macd": macd_line,
         "signal": signal_line,
-        "histogram": histogram
+        "histogram": histogram,
     }

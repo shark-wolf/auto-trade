@@ -13,8 +13,6 @@ class StrategyType(Enum):
     RSI = "rsi"
     GRID = "grid"
     MACD = "macd"
-    BOLLINGER_BANDS = "bollinger_bands"
-    MOMENTUM = "momentum"
 
 
 @dataclass
@@ -50,10 +48,12 @@ STRATEGY_TEMPLATES = {
         strategy_type=StrategyType.MA_CROSS,
         name="均线交叉策略",
         parameters={
-            "short_period": 10,      # 短期均线周期
-            "long_period": 30,       # 长期均线周期
-            "ma_type": "sma",        # 均线类型: sma, ema
-            "confirmation_periods": 2  # 确认周期数
+            "fast_period": 20,
+            "slow_period": 50,
+            "ma_type": "EMA",
+            "min_confidence": 0.6,
+            "stop_loss": 0.02,
+            "take_profit": 0.04,
         }
     ),
     
@@ -61,11 +61,12 @@ STRATEGY_TEMPLATES = {
         strategy_type=StrategyType.RSI,
         name="RSI策略",
         parameters={
-            "period": 14,            # RSI周期
-            "overbought": 70,        # 超买阈值
-            "oversold": 30,          # 超卖阈值
-            "smoothing": 3,          # 平滑因子
-            "divergence_enabled": True  # 是否启用背离检测
+            "rsi_period": 14,
+            "overbought": 70,
+            "oversold": 30,
+            "min_confidence": 0.6,
+            "stop_loss": 0.02,
+            "take_profit": 0.04,
         }
     ),
     
@@ -86,33 +87,14 @@ STRATEGY_TEMPLATES = {
         strategy_type=StrategyType.MACD,
         name="MACD策略",
         parameters={
-            "fast_period": 12,       # 快速EMA周期
-            "slow_period": 26,       # 慢速EMA周期
-            "signal_period": 9,      # 信号线周期
-            "histogram_threshold": 0.1  # 柱状图阈值
+            "fast": 12,
+            "slow": 26,
+            "signal": 9,
+            "min_confidence": 0.6,
+            "stop_loss": 0.02,
+            "take_profit": 0.04,
         }
     ),
-    
-    StrategyType.BOLLINGER_BANDS: StrategyConfig(
-        strategy_type=StrategyType.BOLLINGER_BANDS,
-        name="布林带策略",
-        parameters={
-            "period": 20,            # 布林带周期
-            "std_dev": 2,            # 标准差倍数
-            "band_width_threshold": 0.02  # 带宽阈值
-        }
-    ),
-    
-    StrategyType.MOMENTUM: StrategyConfig(
-        strategy_type=StrategyType.MOMENTUM,
-        name="动量策略",
-        parameters={
-            "period": 10,            # 动量周期
-            "momentum_threshold": 0.5,  # 动量阈值
-            "volume_confirmation": True,  # 是否确认成交量
-            "volume_ratio": 1.2      # 成交量比率阈值
-        }
-    )
 }
 
 
@@ -157,10 +139,12 @@ STRATEGY_COMBINATIONS = {
             take_profit_pct=0.08,
             risk_per_trade=0.02,
             parameters={
-                "short_period": 5,
-                "long_period": 15,
-                "ma_type": "sma",
-                "confirmation_periods": 1
+                "fast_period": 10,
+                "slow_period": 30,
+                "ma_type": "EMA",
+                "min_confidence": 0.6,
+                "stop_loss": 0.03,
+                "take_profit": 0.08,
             }
         ),
         StrategyConfig(
@@ -170,23 +154,12 @@ STRATEGY_COMBINATIONS = {
             stop_loss_pct=0.03,
             take_profit_pct=0.08,
             parameters={
-                "fast_period": 8,
-                "slow_period": 21,
-                "signal_period": 5,
-                "histogram_threshold": 0.05
-            }
-        ),
-        StrategyConfig(
-            strategy_type=StrategyType.MOMENTUM,
-            name="激进动量策略",
-            position_size=0.02,
-            stop_loss_pct=0.03,
-            take_profit_pct=0.08,
-            parameters={
-                "period": 5,
-                "momentum_threshold": 0.3,
-                "volume_confirmation": True,
-                "volume_ratio": 1.5
+                "fast": 8,
+                "slow": 21,
+                "signal": 5,
+                "min_confidence": 0.6,
+                "stop_loss": 0.03,
+                "take_profit": 0.08,
             }
         )
     ],
@@ -226,17 +199,6 @@ STRATEGY_COMBINATIONS = {
                 "grid_size": 0.001
             }
         ),
-        StrategyConfig(
-            strategy_type=StrategyType.BOLLINGER_BANDS,
-            name="多样化布林带策略",
-            position_size=0.01,
-            stop_loss_pct=0.02,
-            take_profit_pct=0.05,
-            parameters={
-                "period": 20,
-                "std_dev": 2.5
-            }
-        )
     ]
 }
 
@@ -262,10 +224,12 @@ DEFAULT_CONFIG = {
             stop_loss_pct=0.02,
             take_profit_pct=0.05,
             parameters={
-                "short_period": 10,
-                "long_period": 30,
-                "ma_type": "ema",
-                "confirmation_periods": 2
+                "fast_period": 20,
+                "slow_period": 50,
+                "ma_type": "EMA",
+                "min_confidence": 0.6,
+                "stop_loss": 0.02,
+                "take_profit": 0.04,
             }
         ),
         StrategyConfig(
@@ -276,10 +240,12 @@ DEFAULT_CONFIG = {
             stop_loss_pct=0.02,
             take_profit_pct=0.05,
             parameters={
-                "period": 14,
+                "rsi_period": 14,
                 "overbought": 70,
                 "oversold": 30,
-                "smoothing": 3
+                "min_confidence": 0.6,
+                "stop_loss": 0.02,
+                "take_profit": 0.04,
             }
         )
     ]

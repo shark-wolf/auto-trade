@@ -7,8 +7,13 @@ from typing import Dict, Any, List
 from datetime import datetime
 from loguru import logger
 import pandas as pd
+import numpy as np
 
 from .base_strategy import BaseStrategy, Signal, SignalType, MarketData, calculate_macd
+try:
+    import talib
+except Exception:
+    talib = None
 
 
 class KDJMACDStrategy(BaseStrategy):
@@ -130,11 +135,27 @@ class KDJMACDStrategy(BaseStrategy):
         hh = highs.iloc[-period:].max()
         rsv = 0.0 if hh == ll else (closes.iloc[-1] - ll) / (hh - ll) * 100.0
 
-        # 平滑(SMA)方式
+        k_smooth = int(kdj.get("k_smooth", 3))
+        d_smooth = int(kdj.get("d_smooth", 3))
+        if talib is not None and len(closes) >= period + max(k_smooth, d_smooth):
+            slowk, slowd = talib.STOCH(
+                highs.values.astype(float),
+                lows.values.astype(float),
+                closes.values.astype(float),
+                fastk_period=period,
+                slowk_period=k_smooth,
+                slowk_matype=0,
+                slowd_period=d_smooth,
+                slowd_matype=0,
+            )
+            k = float(slowk[-1]) if not np.isnan(slowk[-1]) else self.prev_k
+            d = float(slowd[-1]) if not np.isnan(slowd[-1]) else self.prev_d
+            j = 3 * k - 2 * d
+            return {"k": k, "d": d, "j": j, "rsv": rsv}
+
         k = (2.0 / 3) * self.prev_k + (1.0 / 3) * rsv
         d = (2.0 / 3) * self.prev_d + (1.0 / 3) * k
         j = 3 * k - 2 * d
-
         return {"k": k, "d": d, "j": j, "rsv": rsv}
 
     def _kdj_signal(self, k: float, d: float, j: float) -> (SignalType, float):
