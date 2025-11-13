@@ -44,7 +44,7 @@
 
         .dashboard {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
             gap: 20px;
             margin-bottom: 30px;
         }
@@ -55,6 +55,9 @@
             padding: 25px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.1);
             transition: transform 0.3s ease, box-shadow 0.3s ease;
+            height: 520px;
+            overflow-y: auto;
+            overflow-x: hidden;
         }
 
         .card:hover {
@@ -264,6 +267,15 @@
             justify-content: flex-end;
         }
 
+        .card-settings {
+            display: flex;
+            flex-direction: column;
+        }
+        .card-settings .param-actions {
+            margin-top: auto;
+            justify-content: flex-end;
+        }
+
         /* 动态参数弹窗 */
         .modal-overlay {
             position: fixed;
@@ -402,16 +414,16 @@
             <button class="btn" onclick="refreshData()">🔄 刷新数据</button>
             <button class="btn btn-danger" onclick="clearLogs()">🗑️ 清空日志</button>
             <span style="margin-left:10px"></span>
-            <button class="btn" onclick="startAutoTrading()">▶️ 开始自动交易</button>
-            <button class="btn btn-danger" onclick="stopAutoTrading()">⏸️ 停止自动交易</button>
+            <button class="btn" id="btnStart" onclick="startAutoTrading()">▶️ 开始自动交易</button>
+            <button class="btn btn-danger" id="btnStop" onclick="stopAutoTrading()" style="display:none">⏸️ 停止自动交易</button>
             <span style="margin-left:10px"></span>
             <label style="color:#fff; margin-right:6px;">周期</label>
             <select id="tfSelect" onchange="updateTimeframe()"></select>
         </div>
 
         <div class="dashboard">
-            <!-- 🎯 策略状态（置顶） -->
-            <div class="card">
+                <!-- 🎯 策略状态（置顶） -->
+                <div class="card" data-card-id="card-strategy">
                 <h3>🎯 策略状态</h3>
                 <div class="metric">
                     <span class="metric-label">活跃策略数</span>
@@ -438,9 +450,31 @@
                     <span class="metric-value neutral" id="openPositions">--</span>
                 </div>
             </div>
+            <div class="dashboard">
+                <div class="card card-settings" data-card-id="card-settings">
+                    <h3>🛠️ 配置查看与编辑</h3>
+                    <div style="display:flex; gap:16px; flex-wrap:wrap">
+                        <div style="flex:1; min-width:280px">
+                            <div class="param-group-title">系统设置</div>
+                            <div id="settingsList" class="param-chips"><span class="param-empty">--</span></div>
+                        </div>
+                    </div>
+                    <div class="param-actions" style="border-top: 1px solid #ecf0f1; padding-top: 10px;">
+                        <button class="btn" onclick="openSettingsModal()">设置配置</button>
+                    </div>
+                </div>
+                <div class="card" data-card-id="card-creds">
+                    <h3>🔐 交易所凭据</h3>
+                    <div class="param-group-title">当前凭据</div>
+                    <div id="credsList" class="param-chips"><span class="param-empty">--</span></div>
+                    <div class="param-actions" style="border-top: 1px solid #ecf0f1; padding-top: 10px;">
+                        <button class="btn" onclick="openCredsModal()">编辑凭据</button>
+                    </div>
+                </div>
+            </div>
 
             <!-- 🧭 指标参数（与策略状态并列） -->
-            <div class="card">
+            <div class="card" data-card-id="card-indicators">
                 <h3>🧭 指标参数与当前值</h3>
                 <div class="param-group">
                     <div class="param-group-title">KDJ 参数</div>
@@ -459,12 +493,12 @@
                     <div class="param-chips" id="macdValueChips"><span class="param-empty">--</span></div>
                 </div>
                 <div class="param-actions" style="border-top: 1px solid #ecf0f1; padding-top: 10px;">
-                    <button class="btn" onclick="openParamModal()">设置参数（弹窗）</button>
+                    <button class="btn" onclick="openParamModal()">设置参数</button>
                 </div>
             </div>
 
             <!-- 📊 系统状态 -->
-            <div class="card">
+            <div class="card" data-card-id="card-system">
                 <h3>📊 系统状态</h3>
                 <div class="metric">
                     <span class="metric-label">系统运行时间</span>
@@ -485,7 +519,7 @@
             </div>
 
             <!-- ⚠️ 风险指标 -->
-            <div class="card">
+            <div class="card" data-card-id="card-risk">
                 <h3>⚠️ 风险指标</h3>
                 <div class="metric">
                     <span class="metric-label">当前风险敞口</span>
@@ -506,7 +540,7 @@
             </div>
 
             <!-- 📈 交易统计 -->
-            <div class="card">
+            <div class="card" data-card-id="card-stats">
                 <h3>📈 交易统计</h3>
                 <div class="metric">
                     <span class="metric-label">总交易次数</span>
@@ -527,7 +561,7 @@
             </div>
 
             <!-- 💰 资金与持仓 -->
-            <div class="card">
+            <div class="card" data-card-id="card-portfolio">
                 <h3>💰 资金与持仓</h3>
                 <div class="metric">
                     <span class="metric-label">总资产</span>
@@ -571,6 +605,25 @@
                         </thead>
                         <tbody id="pfPositionsBody"></tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 配置编辑弹窗 -->
+        <div class="modal-overlay" id="configModalOverlay" style="display:none">
+            <div class="modal">
+                <div class="modal-header">
+                    <div style="font-weight:600; color:#2c3e50; display:flex; align-items:center; gap:8px;">
+                        <span>🛠️ 编辑配置</span>
+                    </div>
+                    <button class="btn btn-secondary" onclick="closeConfigModal()" aria-label="关闭">✖</button>
+                </div>
+                <div class="modal-body">
+                    <div id="configFormContainer"></div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn-secondary btn" onclick="closeConfigModal()">取消</button>
+                    <button class="btn" onclick="submitConfigForm()">保存并应用</button>
                 </div>
             </div>
         </div>
@@ -652,6 +705,7 @@
                     this.socket.onopen = () => {
                         this.updateConnectionStatus(true);
                         this.logEvent('系统', 'WebSocket连接已建立', 'success');
+                        try { fetchConfig(); } catch (_) {}
                     };
 
                     this.socket.onclose = () => {
@@ -667,6 +721,19 @@
                     this.socket.onmessage = (event) => {
                         try {
                             const data = JSON.parse(event.data);
+                            if (data.type === 'config') {
+                                try {
+                                    window.latestSettings = data.settings || [];
+                                    window.latestLayouts = data.layouts || [];
+                                    window.latestCreds = data.creds || [];
+                                    renderSettings(window.latestSettings);
+                                    renderCreds(window.latestCreds);
+                                    this.logEvent('系统', '配置已刷新', 'success');
+                                    applyCardOrder('card_order_main');
+                                    applyCardOrder('card_order_settings');
+                                } catch (_) {}
+                                return;
+                            }
                             if (data.type === 'ack' && data.action) {
                                 if (data.action === 'timeframe') {
                                     const sel = document.getElementById('tfSelect');
@@ -691,6 +758,28 @@
                                     return;
                                 }
                             }
+                            if (data.type === 'ack' && data.action === 'config_set') {
+                                try {
+                                    if (data.status === 'ok') {
+                                        fetchConfig();
+                                        this.logEvent('系统', '配置更新成功', 'success');
+                                    } else {
+                                        this.logEvent('系统', `配置更新失败: ${data.error || ''}`, 'error');
+                                    }
+                                } catch (_) {}
+                                return;
+                            }
+                            if (data.type === 'ack' && data.action === 'creds_set') {
+                                try {
+                                    if (data.status === 'ok') {
+                                        fetchConfig();
+                                        this.logEvent('系统', '凭据更新成功', 'success');
+                                    } else {
+                                        this.logEvent('系统', `凭据更新失败: ${data.error || ''}`, 'error');
+                                    }
+                                } catch (_) {}
+                                return;
+                            }
                             // 服务器发送的是完整的仪表板数据，需要解析并更新各个组件
                             if (data.system_status) {
                                 this.updateSystemStatus(data.system_status);
@@ -711,6 +800,9 @@
                                 if (iv) {
                                     this.updateIndicatorValues(iv);
                                 }
+                                try {
+                                    window.latestTimeframeOptions = data.strategy_status.timeframe_options || window.latestTimeframeOptions;
+                                } catch (_) {}
                             }
                             if (data.portfolio_status) {
                                 this.updatePortfolioStatus(data.portfolio_status);
@@ -823,6 +915,7 @@
                         });
                         if (prev && opts.includes(prev)) sel.value = prev; else if (data.timeframe) sel.value = String(data.timeframe);
                     }
+                    try { window.latestTimeframeOptions = opts || window.latestTimeframeOptions; } catch (_) {}
                 } catch (_) {}
                 try {
                     const cp = Number(data.current_price ?? 0);
@@ -844,6 +937,7 @@
                     window.activeStrategies = strategies;
                     updateStrategyOptions(strategies);
                 } catch (_) {}
+                try { updateRunButtons(Boolean(data.is_running)); } catch (_) {}
             }
 
             updateIndicatorParams(params) {
@@ -1132,6 +1226,224 @@
             }
         }
 
+        // 配置查看与编辑（全局函数，需在<script>标签内）
+        function fetchConfig() {
+            try {
+                if (!dashboard || !dashboard.socket || dashboard.socket.readyState !== WebSocket.OPEN) return;
+                dashboard.socket.send(JSON.stringify({ type: 'config_get' }));
+            } catch (_) {}
+        }
+
+        function renderSettings(items) {
+            const container = document.getElementById('settingsList');
+            if (!container) return;
+            container.innerHTML = '';
+            try {
+                const arr = Array.isArray(items) ? items : [];
+                if (!arr.length) { container.innerHTML = '<span class="param-empty">--</span>'; return; }
+                window.latestSettings = arr;
+                const labelMap = {};
+                arr.forEach(it => { if (it && it.key) labelMap[it.key] = it.label || null; });
+                arr.forEach(it => {
+                    const k = it.key; const v = it.value;
+                    const chip = document.createElement('span');
+                    chip.className = 'param-chip';
+                    const display = labelMap[k] || k;
+                    const btn = `<button class='btn' style='margin-left:8px' onclick="openSettingsModal('${k}')">编辑</button>`;
+                    chip.innerHTML = `<span class='chip-key'>${display}</span><span class='chip-value'>${v}</span>${btn}`;
+                    container.appendChild(chip);
+                });
+            } catch (_) { container.innerHTML = '<span class="param-empty">--</span>'; }
+        }
+
+        function renderCreds(items) {
+            const container = document.getElementById('credsList');
+            if (!container) return;
+            container.innerHTML = '';
+            const arr = Array.isArray(items) ? items : [];
+            if (!arr.length) { container.innerHTML = '<span class="param-empty">--</span>'; return; }
+            window.latestCreds = arr;
+            arr.forEach(it => {
+                const chip = document.createElement('span');
+                chip.className = 'param-chip';
+                const exchange = it.exchange_type || 'okx';
+                const tn = (String(it.testnet || 'false').toLowerCase() === 'true');
+                const demo = (String(it.is_demo || 'true').toLowerCase() === 'true');
+                const btn = `<button class='btn' style='margin-left:8px' onclick="openCredsModal('${exchange}')">编辑</button>`;
+                chip.innerHTML = ` <span class='chip-key'>交易所</span><span class='chip-value'>${exchange}</span>`+
+                                 ` <span class='chip-key'>测试网</span><span class='chip-value'>${tn ? '是' : '否'}</span>`+
+                                 ` <span class='chip-key'>演示</span><span class='chip-value'>${demo ? '是' : '否'}</span>`+
+                                 btn;
+                container.appendChild(chip);
+            });
+        }
+
+        
+
+        const SETTING_DEFS = [
+            { key: 'api_backend', type: 'enum', options: ['ccxt','okx'] },
+            { key: 'symbol', type: 'string' },
+            { key: 'api_key', type: 'string' },
+            { key: 'api_secret', type: 'string' },
+            { key: 'passphrase', type: 'string' },
+            { key: 'testnet', type: 'boolean' },
+            { key: 'trading_timeframe', type: 'timeframe' }
+        ];
+
+        function openSettingsModal(editKey) {
+            const overlay = document.getElementById('configModalOverlay');
+            overlay.style.display = 'flex';
+            const container = document.getElementById('configFormContainer');
+            container.innerHTML = '';
+            try {
+                const modal = overlay.querySelector('.modal');
+                if (modal) {
+                    modal.classList.remove('animate-in');
+                    requestAnimationFrame(() => { modal.classList.add('animate-in'); });
+                }
+                overlay.addEventListener('click', (e) => {
+                    if (e.target === overlay) closeConfigModal();
+                }, { once: true });
+            } catch (_) {}
+            const defs = SETTING_DEFS;
+            const keyRow = document.createElement('div');
+            keyRow.className = 'form-row';
+            const keyLabel = document.createElement('label');
+            keyLabel.textContent = '键';
+            const keySelect = document.createElement('select');
+            keySelect.id = 'cfg_key';
+            defs.forEach(d => { const o = document.createElement('option'); o.value = d.key; o.textContent = d.key; keySelect.appendChild(o); });
+            if (editKey) keySelect.value = editKey;
+            keyRow.appendChild(keyLabel); keyRow.appendChild(keySelect); container.appendChild(keyRow);
+            const valRow = document.createElement('div');
+            valRow.className = 'form-row';
+            const valLabel = document.createElement('label');
+            valLabel.textContent = '值';
+            const valueWrap = document.createElement('div');
+            valueWrap.id = 'cfg_value_wrap';
+            valRow.appendChild(valLabel); valRow.appendChild(valueWrap); container.appendChild(valRow);
+            const labRow = document.createElement('div');
+            labRow.className = 'form-row';
+            const labLabel = document.createElement('label'); labLabel.textContent = '显示文字';
+            const labInput = document.createElement('input'); labInput.id = 'cfg_label'; labInput.type = 'text'; labRow.appendChild(labLabel); labRow.appendChild(labInput); container.appendChild(labRow);
+            const hint = document.createElement('div');
+            hint.className = 'param-group-title';
+            hint.id = 'cfg_hint';
+            container.appendChild(hint);
+            const renderInput = () => {
+                const k = keySelect.value;
+                const def = defs.find(x => x.key === k) || { type: 'string' };
+                valueWrap.innerHTML = '';
+                let inputEl;
+                if (def.type === 'boolean') {
+                    inputEl = document.createElement('select');
+                    ['true','false'].forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; inputEl.appendChild(o); });
+                } else if (def.type === 'enum') {
+                    inputEl = document.createElement('select');
+                    (def.options || []).forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; inputEl.appendChild(o); });
+                } else if (def.type === 'timeframe') {
+                    inputEl = document.createElement('select');
+                    const opts = (window.latestTimeframeOptions || ['1m','5m','15m','1h','4h']);
+                    opts.forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; inputEl.appendChild(o); });
+                } else {
+                    inputEl = document.createElement('input');
+                    inputEl.type = 'text';
+                }
+                inputEl.id = 'cfg_value';
+                valueWrap.appendChild(inputEl);
+                const arr = window.latestSettings || [];
+                if (Array.isArray(arr)) {
+                    const it = arr.find(x => x && x.key === k);
+                    if (it && it.value !== undefined) inputEl.value = String(it.value);
+                    if (it && it.label !== undefined && it.label !== null) labInput.value = String(it.label);
+                }
+                hint.textContent = def.type === 'timeframe' ? '选择交易所支持的周期' : def.type === 'enum' ? `允许值: ${(def.options||[]).join(', ')}` : def.type === 'boolean' ? 'true/false' : '文本';
+            };
+            keySelect.addEventListener('change', renderInput);
+            renderInput();
+            window.configModalMode = 'settings';
+        }
+
+        
+
+        function closeConfigModal() {
+            try { document.getElementById('configModalOverlay').style.display = 'none'; } catch (_) {}
+            window.configModalMode = null;
+        }
+
+        function submitConfigForm() {
+            try {
+                if (!dashboard || !dashboard.socket || dashboard.socket.readyState !== WebSocket.OPEN) return;
+                if (window.configModalMode === 'settings') {
+                    const keyEl = document.getElementById('cfg_key');
+                    const valEl = document.getElementById('cfg_value');
+                    const labEl = document.getElementById('cfg_label');
+                    const k = keyEl.value;
+                    const def = SETTING_DEFS.find(x => x.key === k) || { type: 'string' };
+                    let v = valEl.value;
+                    if (def.type === 'boolean') v = String(v).toLowerCase() === 'true' ? 'true' : 'false';
+                    if (def.type === 'enum' && def.options && !def.options.includes(v)) { alert('值不在允许范围'); return; }
+                    if (def.type === 'timeframe') {
+                        const opts = window.latestTimeframeOptions || ['1m','5m','15m','1h','4h'];
+                        if (!opts.includes(v)) { alert('周期不被交易所支持'); return; }
+                    }
+                    const lbl = labEl && labEl.value ? labEl.value.trim() : '';
+                    dashboard.socket.send(JSON.stringify({ type: 'config_set', key: k, value: v, label: lbl || null }));
+                    closeConfigModal();
+                    return;
+                } else if (window.configModalMode === 'creds') {
+                    const exchangeEl = document.getElementById('creds_exchange');
+                    const keyEl = document.getElementById('creds_key');
+                    const secretEl = document.getElementById('creds_secret');
+                    const passEl = document.getElementById('creds_pass');
+                    const tnEl = document.getElementById('creds_testnet');
+                    const demoEl = document.getElementById('creds_demo');
+                    const exchange_type = exchangeEl.value || 'okx';
+                    const api_key = keyEl.value || '';
+                    const api_secret = secretEl.value || '';
+                    const passphrase = passEl.value || '';
+                    const testnet = String(tnEl.value || 'false').toLowerCase() === 'true' ? 'true' : 'false';
+                    const is_demo = String(demoEl.value || 'true').toLowerCase() === 'true' ? 'true' : 'false';
+                    dashboard.socket.send(JSON.stringify({ type: 'creds_set', exchange_type, api_key, api_secret, passphrase, testnet, is_demo }));
+                    closeConfigModal();
+                    return;
+                }
+            } catch (e) { dashboard.logEvent('错误', e.message, 'error'); }
+        }
+
+        function openCredsModal(exchangeType) {
+            const overlay = document.getElementById('configModalOverlay');
+            overlay.style.display = 'flex';
+            const container = document.getElementById('configFormContainer');
+            container.innerHTML = '';
+            const modal = overlay.querySelector('.modal');
+            if (modal) { modal.classList.remove('animate-in'); requestAnimationFrame(() => { modal.classList.add('animate-in'); }); }
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) closeConfigModal(); }, { once: true });
+            const arr = window.latestCreds || [];
+            const it = arr.find(x => x && x.exchange_type === exchangeType) || arr[0] || { exchange_type: 'okx', api_key: '', api_secret: '', passphrase: '', testnet: 'false', is_demo: 'true' };
+            const row2 = document.createElement('div'); row2.className = 'form-row';
+            const l2 = document.createElement('label'); l2.textContent = '交易所';
+            const s2 = document.createElement('select'); s2.id = 'creds_exchange';
+            ['okx','binance','bybit'].forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; s2.appendChild(o); });
+            s2.value = (it.exchange_type || 'okx'); row2.appendChild(l2); row2.appendChild(s2); container.appendChild(row2);
+            const row3 = document.createElement('div'); row3.className = 'form-row';
+            const l3 = document.createElement('label'); l3.textContent = 'API Key';
+            const i3 = document.createElement('input'); i3.id = 'creds_key'; i3.type = 'text'; i3.value = it.api_key || ''; row3.appendChild(l3); row3.appendChild(i3); container.appendChild(row3);
+            const row4 = document.createElement('div'); row4.className = 'form-row';
+            const l4 = document.createElement('label'); l4.textContent = 'API Secret';
+            const i4 = document.createElement('input'); i4.id = 'creds_secret'; i4.type = 'password'; i4.value = it.api_secret || ''; row4.appendChild(l4); row4.appendChild(i4); container.appendChild(row4);
+            const row5 = document.createElement('div'); row5.className = 'form-row';
+            const l5 = document.createElement('label'); l5.textContent = 'Passphrase';
+            const i5 = document.createElement('input'); i5.id = 'creds_pass'; i5.type = 'text'; i5.value = it.passphrase || ''; row5.appendChild(l5); row5.appendChild(i5); container.appendChild(row5);
+            const row6 = document.createElement('div'); row6.className = 'form-row';
+            const l6 = document.createElement('label'); l6.textContent = '测试网';
+            const s6 = document.createElement('select'); s6.id = 'creds_testnet'; ['true','false'].forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; s6.appendChild(o); }); s6.value = String(it.testnet || 'false').toLowerCase() === 'true' ? 'true' : 'false'; row6.appendChild(l6); row6.appendChild(s6); container.appendChild(row6);
+            const row7 = document.createElement('div'); row7.className = 'form-row';
+            const l7 = document.createElement('label'); l7.textContent = '演示模式';
+            const s7 = document.createElement('select'); s7.id = 'creds_demo'; ['true','false'].forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; s7.appendChild(o); }); s7.value = String(it.is_demo || 'true').toLowerCase() === 'true' ? 'true' : 'false'; row7.appendChild(l7); row7.appendChild(s7); container.appendChild(row7);
+            window.configModalMode = 'creds';
+        }
+
         // 前端乐观更新：根据提交的 updates 立即更新“指标参数”chips
         function optimisticUpdateIndicatorParams(strategy, updates) {
             try {
@@ -1365,6 +1677,7 @@
                 const msg = { type: 'control', action };
                 dashboard.socket.send(JSON.stringify(msg));
                 dashboard.logEvent('系统', `已发送控制指令: ${action}`, 'info');
+                try { updateRunButtons(action === 'start'); } catch (_) {}
             } catch (e) {
                 dashboard.logEvent('错误', `发送控制指令失败: ${e.message}`, 'error');
             }
@@ -1373,6 +1686,35 @@
         function tfLabel(tf) {
             const map = { '1m': '1分钟', '5m': '5分钟', '15m': '15分钟', '1h': '1小时', '4h': '4小时' };
             return map[tf] || tf;
+        }
+
+        function ensureDefaultTfOptions() {
+            try {
+                const sel = document.getElementById('tfSelect');
+                if (!sel) return;
+                if (sel.options.length === 0) {
+                    ['1m','5m','15m','1h','4h'].forEach(o => {
+                        const opt = document.createElement('option');
+                        opt.value = o; opt.textContent = tfLabel(o);
+                        sel.appendChild(opt);
+                    });
+                }
+            } catch (_) {}
+        }
+
+        function updateRunButtons(isRunning) {
+            try {
+                const btnStart = document.getElementById('btnStart');
+                const btnStop = document.getElementById('btnStop');
+                if (!btnStart || !btnStop) return;
+                if (isRunning) {
+                    btnStart.style.display = 'none';
+                    btnStop.style.display = '';
+                } else {
+                    btnStart.style.display = '';
+                    btnStop.style.display = 'none';
+                }
+            } catch (_) {}
         }
 
         function updateTimeframe() {
@@ -1423,6 +1765,8 @@
         let dashboard;
         document.addEventListener('DOMContentLoaded', function() {
             dashboard = new TradingDashboard();
+            ensureDefaultTfOptions();
+            enableCardDrag();
         });
 
         // 错误处理
@@ -1431,6 +1775,101 @@
                 dashboard.logEvent('错误', `页面错误: ${e.message}`, 'error');
             }
         });
+        function enableCardDrag() {
+            const containers = Array.from(document.querySelectorAll('.dashboard'));
+            containers.forEach(container => {
+                const cards = Array.from(container.querySelectorAll('.card'));
+                cards.forEach(card => {
+                    card.setAttribute('draggable', 'true');
+                    card.addEventListener('dragstart', onCardDragStart);
+                    card.addEventListener('dragover', onCardDragOver);
+                    card.addEventListener('dragleave', onCardDragLeave);
+                    card.addEventListener('drop', onCardDrop);
+                    card.addEventListener('dragend', onCardDragEnd);
+                });
+                container.addEventListener('dragover', onContainerDragOver);
+                container.addEventListener('drop', onContainerDrop);
+            });
+        }
+        let dragCard = null;
+        let dragSourceContainer = null;
+        function onCardDragStart(e) {
+            dragCard = this;
+            dragSourceContainer = this.parentElement;
+            this.classList.add('dragging');
+            try { e.dataTransfer.setData('text/plain', ''); } catch (_) {}
+        }
+        function onCardDragOver(e) {
+            e.preventDefault();
+            if (!dragCard || dragCard === this) return;
+            this.classList.add('drag-over');
+        }
+        function onCardDragLeave() {
+            this.classList.remove('drag-over');
+        }
+        function onCardDragEnd() {
+            this.classList.remove('dragging');
+            this.classList.remove('drag-over');
+            dragCard = null;
+            dragSourceContainer = null;
+        }
+        function onCardDrop(e) {
+            e.preventDefault();
+            this.classList.remove('drag-over');
+            if (!dragCard || dragCard === this) return;
+            const container = this.parentElement;
+            const rect = this.getBoundingClientRect();
+            const before = (e.clientY - rect.top) < rect.height / 2;
+            if (before) {
+                container.insertBefore(dragCard, this);
+            } else {
+                container.insertBefore(dragCard, this.nextSibling);
+            }
+            try { persistBothOrders(container, dragSourceContainer); } catch (_) {}
+        }
+        function onContainerDragOver(e) {
+            e.preventDefault();
+        }
+        function onContainerDrop(e) {
+            e.preventDefault();
+            if (!dragCard) return;
+            const container = this;
+            container.appendChild(dragCard);
+            try { persistBothOrders(container, dragSourceContainer); } catch (_) {}
+        }
+
+        function getCardOrder(container) {
+            return Array.from(container.querySelectorAll('.card')).map(c => c.getAttribute('data-card-id')).filter(Boolean);
+        }
+
+        function persistCardOrder(container) {
+            const order = getCardOrder(container);
+            const containerName = container.querySelector('.card-settings') ? 'settings' : 'main';
+            if (!dashboard || !dashboard.socket || dashboard.socket.readyState !== WebSocket.OPEN) return;
+            dashboard.socket.send(JSON.stringify({ type: 'layout_set', container: containerName, order }));
+            dashboard.logEvent('系统', `已保存卡片顺序(${containerName}): ${order.join(', ')}`, 'info');
+        }
+        function persistBothOrders(targetContainer, sourceContainer) {
+            if (targetContainer) persistCardOrder(targetContainer);
+            if (sourceContainer && sourceContainer !== targetContainer) persistCardOrder(sourceContainer);
+        }
+
+        function applyCardOrder(orderKey) {
+            try {
+                const items = window.latestSettings || [];
+                const it = Array.isArray(items) ? items.find(x => x && x.key === orderKey) : null;
+                const raw = it ? it.value : null;
+                if (!raw) return;
+                let order = [];
+                try { order = JSON.parse(raw); } catch (_) { return; }
+                const container = orderKey === 'card_order_main' ? document.querySelectorAll('.dashboard')[0] : document.querySelectorAll('.dashboard')[1];
+                if (!container || !order || !order.length) return;
+                const map = {};
+                container.querySelectorAll('.card').forEach(c => { const id = c.getAttribute('data-card-id'); if (id) map[id] = c; });
+                order.forEach(id => { const node = map[id]; if (node) container.appendChild(node); });
+            } catch (_) {}
+        }
     </script>
-</body>
-</html>
+    </body>
+    </html>
+      

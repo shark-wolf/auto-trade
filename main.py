@@ -12,13 +12,15 @@ from loguru import logger
 import json
 import argparse
 from pathlib import Path
+from dotenv import load_dotenv
+from utils.settings_store import SettingsStore
 
 # 添加src目录到Python路径
 current_dir = Path(__file__).parent
 src_dir = current_dir / "src"
 sys.path.insert(0, str(src_dir))
 
-from api import OKXClient, OKXWebSocketClient, MarketDataHandler, OKXConfig, CCXTClient
+from api import MarketDataHandler, CCXTClient
 from strategies import StrategyManager, MarketData, Signal, SignalType
 from risk import RiskManager, PortfolioManager
 from execution import OrderManager
@@ -50,6 +52,7 @@ class TradingBot:
         # 运行状态
         self.is_running = False
         self.tasks = []
+        self.ccxt_poll_task = None
         # 分钟边界对齐：记录最近已处理的K线时间戳（毫秒）
         self.last_processed_candle_ts = None
         
@@ -60,7 +63,6 @@ class TradingBot:
     
     def _load_config(self) -> Dict[str, Any]:
         """加载配置"""
-        from dotenv import load_dotenv
         
         # 加载 .env 环境变量（优先使用项目根目录下的 .env）
         try:
@@ -68,18 +70,16 @@ class TradingBot:
             if env_path.exists():
                 load_dotenv(env_path)
             else:
-                # 回退到默认查找（系统环境或父目录）
                 load_dotenv()
         except Exception:
-            # 任何异常情况下继续执行，保持默认环境
             load_dotenv()
         
         config = {
-            # API配置
-            "api_key": os.getenv("OKX_API_KEY", ""),
-            "api_secret": os.getenv("OKX_SECRET_KEY", ""),
-            "passphrase": os.getenv("OKX_PASSPHRASE", ""),
-            "testnet": os.getenv("OKX_TESTNET", "true").lower() == "true",
+            # API配置（从数据库读取为主，默认空/演示）
+            "api_key": "",
+            "api_secret": "",
+            "passphrase": "",
+            "testnet": True,
             
             # 交易配置
             "trading_mode": os.getenv("TRADING_MODE", "demo"),
@@ -116,7 +116,6 @@ class TradingBot:
             "enable_websocket": os.getenv("ENABLE_WEBSOCKET", "true").lower() == "true",
             # 行情轮询（CCXT）
             "enable_ccxt_polling": os.getenv("ENABLE_CCXT_POLLING", "true").lower() == "true",
-            "ccxt_timeframe": os.getenv("CCXT_TIMEFRAME", "1m"),
             "enable_backtest": os.getenv("ENABLE_BACKTEST", "true").lower() == "true",
             "backtest_bars": int(os.getenv("BACKTEST_BARS", "500")),
             
@@ -124,8 +123,36 @@ class TradingBot:
             "database_url": os.getenv("DATABASE_URL", "")
         }
 
+        try:
+            db_url = config.get("database_url") or "sqlite:///data/trading.db"
+            db_path = db_url.replace("sqlite:///", "") if db_url.startswith("sqlite:///") else db_url
+            store = SettingsStore(db_path)
+            # 通用设置
+            v = store.get("api_backend")
+            if v: config["api_backend"] = v.lower()
+            v = store.get("symbol")
+            if v: config["symbol"] = v
+            v = store.get("trading_timeframe")
+            if v: config["trading_timeframe"] = v
+            # 凭据（按后端读取）
+            creds = store.get_credentials(config.get("exchange_type", None))
+            if creds:
+                config["api_key"] = creds.get("api_key", "")
+                config["api_secret"] = creds.get("api_secret", "")
+                config["passphrase"] = creds.get("passphrase", "")
+                config["testnet"] = str(creds.get("testnet", "false")).lower() == "true"
+                et = creds.get("exchange_type", "okx")
+                if et:
+                    config["exchange_type"] = et
+                is_demo = str(creds.get("is_demo", "true")).lower() == "true"
+                if is_demo:
+                    config["trading_mode"] = "demo"
+        except Exception:
+            pass
+
         # 后端选择与调试开关
-        config["api_backend"] = os.getenv("API_BACKEND", "ccxt").lower()
+        config["api_backend"] = "ccxt"
+        config["trading_timeframe"] = config.get("trading_timeframe") or "1m"
         config["api_debug"] = os.getenv("API_DEBUG", "false").lower() == "true"
         
         # 验证必要配置
@@ -174,33 +201,21 @@ class TradingBot:
         try:
             logger.info("开始初始化交易机器人组件...")
             
-            # 初始化API客户端（支持 CCXT 切换）
-            if self.config.get("api_backend") == "ccxt":
-                logger.info("使用 CCXT 作为交易后端")
-                self.api_client = CCXTClient(
-                    api_key=self.config["api_key"],
-                    secret=self.config["api_secret"],
-                    passphrase=self.config["passphrase"],
-                    testnet=self.config["testnet"]
-                )
-            else:
-                okx_config = OKXConfig(
-                    api_key=self.config["api_key"],
-                    secret_key=self.config["api_secret"],
-                    passphrase=self.config["passphrase"],
-                    testnet=self.config["testnet"]
-                )
-                self.api_client = OKXClient(okx_config)
+            # 初始化API客户端（统一使用 CCXT）
+            logger.info("使用 CCXT 作为交易后端")
+            self.api_client = CCXTClient(
+                api_key=self.config["api_key"],
+                secret=self.config["api_secret"],
+                passphrase=self.config["passphrase"],
+                testnet=self.config["testnet"],
+                exchange_type=self.config.get("exchange_type", "okx")
+            )
             
             # 测试API连接
             await self._test_api_connection()
             
-            # 初始化WebSocket客户端
-            if self.config.get("api_backend") == "ccxt":
-                self.ws_client = None
-            else:
-                auth_data = self.api_client.get_ws_auth()
-                self.ws_client = OKXWebSocketClient(auth_data)
+            # 初始化WebSocket客户端（监控页交互，交易不使用WS）
+            self.ws_client = None
             
             # 初始化市场数据处理
             self.market_data_handler = MarketDataHandler()
@@ -211,7 +226,8 @@ class TradingBot:
                     api_key=self.config["api_key"],
                     secret=self.config["api_secret"],
                     passphrase=self.config["passphrase"],
-                    testnet=self.config["testnet"]
+                    testnet=self.config["testnet"],
+                    exchange_type=self.config.get("exchange_type", "okx")
                 )
             except Exception:
                 self.ccxt_public = None
@@ -260,6 +276,10 @@ class TradingBot:
                 pass
             try:
                 self.monitoring_service.register_timeframe_callback(self._on_monitoring_timeframe_update)
+            except Exception:
+                pass
+            try:
+                self.monitoring_service.register_creds_callback(self._on_monitoring_creds_update)
             except Exception:
                 pass
             
@@ -427,8 +447,8 @@ class TradingBot:
             # 启动 CCXT 轮询（作为实时/回退数据源）
             if self.config.get("enable_ccxt_polling", True) and getattr(self, "ccxt_public", None):
                 try:
-                    poll_task = asyncio.create_task(self._ccxt_polling_loop())
-                    self.tasks.append(poll_task)
+                    self.ccxt_poll_task = asyncio.create_task(self._ccxt_polling_loop())
+                    self.tasks.append(self.ccxt_poll_task)
                     logger.info("已启动CCXT行情轮询")
                 except Exception as e:
                     logger.error(f"启动CCXT轮询失败: {str(e)}")
@@ -481,7 +501,7 @@ class TradingBot:
                             'open_positions': 0,
                             'indicator_params': {},
                             'indicator_values': {},
-                            'timeframe': self.config.get('trading_timeframe', self.config.get('ccxt_timeframe', '1m')),
+                            'timeframe': self.config.get('trading_timeframe', '1m'),
                             'timeframe_options': tf_opts or ['1m','5m','15m','1h','4h']
                         })
                     except Exception:
@@ -623,7 +643,11 @@ class TradingBot:
         while self.is_running:
             try:
                 # 使用最新的1分钟K线驱动策略分析
-                candle = self.market_data_handler.get_latest_candle(self.config["symbol"])
+                candle_getter = getattr(self.market_data_handler, "get_latest_candle", None)
+                if callable(candle_getter):
+                    candle = candle_getter(self.config["symbol"]) 
+                else:
+                    candle = getattr(self.market_data_handler, "candle_cache", {}).get(self.config["symbol"]) 
                 if candle:
                     ts = candle.get("ts")
                     confirm = candle.get("confirm", False)
@@ -666,7 +690,7 @@ class TradingBot:
                     await asyncio.sleep(5)
                     continue
                 # 获取最近两根K线
-                tf = self.config.get("trading_timeframe", self.config.get("ccxt_timeframe", "1m"))
+                tf = self.config.get("trading_timeframe", "1m")
                 ohlcv = await self.ccxt_public.fetch_ohlcv(symbol, timeframe=tf, limit=2)
                 if ohlcv and len(ohlcv) >= 2:
                     prev = ohlcv[-2]
@@ -710,7 +734,7 @@ class TradingBot:
 
     async def _backtest_kdj_macd_okx(self):
         symbol = self.config.get("symbol")
-        timeframe = self.config.get("trading_timeframe", self.config.get("ccxt_timeframe", "1m"))
+        timeframe = self.config.get("trading_timeframe", "1m")
         bars = int(self.config.get("backtest_bars", 500))
         import asyncio
         from strategies.kdj_macd_strategy import KDJMACDStrategy
@@ -1088,8 +1112,10 @@ class TradingBot:
                             'open_positions': open_positions,
                             'indicator_params': indicator_params,
                             'indicator_values': indicator_values,
-                            'timeframe': self.config.get("trading_timeframe", self.config.get("ccxt_timeframe", "1m")),
+                            'timeframe': self.config.get("trading_timeframe", "1m"),
                             'current_price': float(self.market_data_handler.get_latest_price(self.config.get("symbol")) or 0.0),
+                            'timeframe_options': (self.ccxt_public.available_timeframes() if getattr(self, 'ccxt_public', None) else None) or ['1m','5m','15m','1h','4h'],
+                            'is_running': bool(self.is_running)
                         })
                 except Exception:
                     # 推送失败不影响主流程
@@ -1295,6 +1321,83 @@ class TradingBot:
                         'indicator_params': {},
                         'indicator_values': {},
                         'timeframe': tf,
+                        'current_price': float(self.market_data_handler.get_latest_price(self.config.get("symbol")) or 0.0),
+                        'timeframe_options': (self.ccxt_public.available_timeframes() if getattr(self, 'ccxt_public', None) else None) or ['1m','5m','15m','1h','4h']
+                    })
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    async def _on_monitoring_creds_update(self, payload: Dict[str, Any]):
+        try:
+            backend = str(payload.get("backend", "ccxt")).lower()
+            exchange_type = str(payload.get("exchange_type", "okx")).lower()
+            api_key = str(payload.get("api_key", ""))
+            api_secret = str(payload.get("api_secret", ""))
+            passphrase = str(payload.get("passphrase", ""))
+            testnet = str(payload.get("testnet", "false")).lower() == "true"
+            is_demo = str(payload.get("is_demo", "true")).lower() == "true"
+            self.config["api_backend"] = backend
+            self.config["exchange_type"] = exchange_type
+            self.config["api_key"] = api_key
+            self.config["api_secret"] = api_secret
+            self.config["passphrase"] = passphrase
+            self.config["testnet"] = testnet
+            if is_demo:
+                self.config["trading_mode"] = "demo"
+            try:
+                if getattr(self, "api_client", None):
+                    await self.api_client.close()
+            except Exception:
+                pass
+            try:
+                if getattr(self, "ccxt_public", None):
+                    await self.ccxt_public.close()
+            except Exception:
+                pass
+            try:
+                self.api_client = CCXTClient(
+                    api_key=self.config["api_key"],
+                    secret=self.config["api_secret"],
+                    passphrase=self.config["passphrase"],
+                    testnet=self.config["testnet"],
+                    exchange_type=self.config.get("exchange_type", "okx")
+                )
+                self.ccxt_public = CCXTClient(
+                    api_key=self.config["api_key"],
+                    secret=self.config["api_secret"],
+                    passphrase=self.config["passphrase"],
+                    testnet=self.config["testnet"],
+                    exchange_type=self.config.get("exchange_type", "okx")
+                )
+            except Exception:
+                return
+            try:
+                if getattr(self, "order_manager", None):
+                    self.order_manager.api_client = self.api_client
+            except Exception:
+                pass
+            try:
+                if self.ccxt_poll_task:
+                    self.ccxt_poll_task.cancel()
+                    await asyncio.gather(self.ccxt_poll_task, return_exceptions=True)
+                if self.config.get("enable_ccxt_polling", True) and getattr(self, "ccxt_public", None):
+                    self.ccxt_poll_task = asyncio.create_task(self._ccxt_polling_loop())
+                    self.tasks.append(self.ccxt_poll_task)
+            except Exception:
+                pass
+            try:
+                if self.monitoring_service and self.strategy_manager:
+                    active = self.strategy_manager.get_active_strategies()
+                    self.monitoring_service.update_strategy_status({
+                        'active_strategies': active,
+                        'recent_signals': len(self.strategy_manager.get_recent_signals(24)),
+                        'executed_orders': self.order_manager.get_order_summary().get('total_orders', 0) if self.order_manager else 0,
+                        'open_positions': 0,
+                        'indicator_params': {},
+                        'indicator_values': {},
+                        'timeframe': self.config.get('trading_timeframe', '1m'),
                         'current_price': float(self.market_data_handler.get_latest_price(self.config.get("symbol")) or 0.0),
                         'timeframe_options': (self.ccxt_public.available_timeframes() if getattr(self, 'ccxt_public', None) else None) or ['1m','5m','15m','1h','4h']
                     })

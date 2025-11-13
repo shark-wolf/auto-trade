@@ -467,13 +467,26 @@ class MonitoringService:
         # 参数更新回调（由交易机器人注册，用于处理指标参数更新）
         self.params_callback = None
         self.timeframe_callback = None
+        self.creds_callback = None
         
         # 数据库连接
         self.db_connection = None
-        self.db_path = self.config.get("db_path", "logs/monitoring.db")
+        self.db_path = self.config.get("db_path") or self._derive_db_path(self.config)
         
         # 初始化数据库
         self._initialize_database()
+        try:
+            self._migrate_settings_from_legacy()
+        except Exception as _:
+            pass
+        try:
+            self._consolidate_labels_in_current_db()
+        except Exception as _:
+            pass
+        try:
+            self._seed_settings_from_config()
+        except Exception as _:
+            pass
         
         # 启动后台任务
         self.background_tasks = []
@@ -554,10 +567,19 @@ class MonitoringService:
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL,
+                    label TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )
+            # 兼容：若旧库无label列，补充添加
+            try:
+                cols = cursor.execute("PRAGMA table_info(settings)").fetchall()
+                names = {c[1] for c in cols}
+                if "label" not in names:
+                    cursor.execute("ALTER TABLE settings ADD COLUMN label TEXT")
+            except Exception:
+                pass
 
             cursor.execute(
                 """
@@ -570,10 +592,168 @@ class MonitoringService:
                 """
             )
 
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS api_credentials (
+                    backend TEXT,
+                    exchange_type TEXT,
+                    api_key TEXT,
+                    api_secret TEXT,
+                    passphrase TEXT,
+                    testnet TEXT,
+                    is_demo TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            try:
+                cols = cursor.execute("PRAGMA table_info(api_credentials)").fetchall()
+                names = {c[1] for c in cols}
+                if "exchange_type" not in names:
+                    cursor.execute("ALTER TABLE api_credentials ADD COLUMN exchange_type TEXT")
+            except Exception:
+                pass
+            try:
+                cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_api_credentials_exchange_type ON api_credentials(exchange_type)")
+            except Exception:
+                pass
+
             self.db_connection.commit()
             
         except Exception as e:
             logger.error(f"初始化数据库失败: {str(e)}")
+
+    def _derive_db_path(self, cfg: Dict[str, Any]) -> str:
+        try:
+            url = (cfg or {}).get("database_url") or ""
+            if url.startswith("sqlite:///"):
+                return url.replace("sqlite:///", "")
+            if url.endswith(".db"):
+                return url
+        except Exception:
+            pass
+        return "logs/monitoring.db"
+
+    def _migrate_settings_from_legacy(self):
+        try:
+            legacy_path = "logs/monitoring.db"
+            if not legacy_path or legacy_path == self.db_path:
+                return
+            legacy = Path(legacy_path)
+            if not legacy.exists():
+                return
+            src = sqlite3.connect(legacy_path)
+            try:
+                cursor = src.cursor()
+                rows = cursor.execute("SELECT key, value FROM settings").fetchall()
+            except Exception:
+                rows = []
+            finally:
+                try:
+                    src.close()
+                except Exception:
+                    pass
+            if not rows:
+                return
+            try:
+                for k, v in rows:
+                    try:
+                        k = str(k)
+                        if k.startswith("label:"):
+                            actual = k[6:]
+                            # 设置显示文字到label列
+                            self.set_setting(actual, self.get_setting(actual) or "", label=str(v))
+                        else:
+                            self.set_setting(k, str(v))
+                    except Exception:
+                        pass
+                logger.info(f"迁移完成: settings 从 {legacy_path} -> {self.db_path}")
+            except Exception as e:
+                logger.error(f"迁移settings失败: {str(e)}")
+        except Exception:
+            pass
+
+    def _consolidate_labels_in_current_db(self):
+        try:
+            cursor = self.db_connection.cursor()
+            rows = cursor.execute("SELECT key, value FROM settings WHERE key LIKE 'label:%'").fetchall()
+            if not rows:
+                return
+            for lk, lbl in rows:
+                try:
+                    actual = str(lk)[6:]
+                    exists = cursor.execute("SELECT key FROM settings WHERE key = ?", (actual,)).fetchone()
+                    if exists:
+                        cursor.execute("UPDATE settings SET label = ? WHERE key = ?", (str(lbl), actual))
+                    else:
+                        cursor.execute(
+                            "INSERT INTO settings(key, value, label, updated_at) VALUES(?, ?, ?, CURRENT_TIMESTAMP)",
+                            (actual, "", str(lbl))
+                        )
+                    cursor.execute("DELETE FROM settings WHERE key = ?", (lk,))
+                except Exception:
+                    pass
+            self.db_connection.commit()
+        except Exception:
+            pass
+
+    def _seed_settings_from_config(self):
+        cfg = self.config or {}
+        defaults = [
+            ("api_backend", str(cfg.get("api_backend") or "ccxt"), "后端"),
+            ("symbol", str(cfg.get("symbol") or "BTC-USDT-SWAP"), "交易对"),
+            ("trading_timeframe", str(cfg.get("trading_timeframe") or "1m"), "周期"),
+            ("ws_host", str(cfg.get("ws_host") or "127.0.0.1"), "WS主机"),
+            ("ws_port", str(cfg.get("ws_port") or 8765), "WS端口"),
+            ("enable_websocket", "true" if bool(cfg.get("enable_websocket", True)) else "false", "启用WS"),
+            ("enable_monitoring", "true" if bool(cfg.get("enable_monitoring", True)) else "false", "启用监控"),
+            ("enable_ccxt_polling", "true" if bool(cfg.get("enable_ccxt_polling", True)) else "false", "启用轮询"),
+            ("database_url", str(cfg.get("database_url") or "sqlite:///data/trading.db"), "数据库URL"),
+        ]
+        # 默认卡片顺序初始化到 card_layouts 表（仅在不存在时）
+        try:
+            cursor = self.db_connection.cursor()
+            row = cursor.execute("SELECT container FROM card_layouts WHERE container = 'main'").fetchone()
+            if not row:
+                default_main_order = ["card-strategy", "card-settings", "card-indicators", "card-system", "card-risk", "card-stats", "card-portfolio"]
+                cursor.execute(
+                    "INSERT INTO card_layouts(container, order_json, updated_at) VALUES(?, ?, CURRENT_TIMESTAMP)",
+                    ('main', json.dumps(default_main_order, ensure_ascii=False))
+                )
+            row = cursor.execute("SELECT container FROM card_layouts WHERE container = 'settings'").fetchone()
+            if not row:
+                default_settings_order = ["card-settings"]
+                cursor.execute(
+                    "INSERT INTO card_layouts(container, order_json, updated_at) VALUES(?, ?, CURRENT_TIMESTAMP)",
+                    ('settings', json.dumps(default_settings_order, ensure_ascii=False))
+                )
+            self.db_connection.commit()
+        except Exception:
+            pass
+
+        try:
+            cursor = self.db_connection.cursor()
+            rows = cursor.execute("SELECT key, label FROM settings").fetchall()
+            existing = {row[0] for row in rows}
+            existing_labels = {row[0]: row[1] for row in rows}
+        except Exception:
+            existing = set()
+            existing_labels = {}
+
+        for k, v, lbl in defaults:
+            try:
+                if k not in existing:
+                    self.set_setting(k, v, lbl)
+                else:
+                    cur_lbl = existing_labels.get(k)
+                    if (cur_lbl is None or str(cur_lbl).strip() == "") and lbl:
+                        try:
+                            cursor.execute("UPDATE settings SET label = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?", (lbl, k))
+                            self.db_connection.commit()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
     def get_setting(self, key: str) -> Optional[str]:
         try:
@@ -584,12 +764,12 @@ class MonitoringService:
         except Exception:
             return None
 
-    def set_setting(self, key: str, value: str) -> bool:
+    def set_setting(self, key: str, value: str, label: Optional[str] = None) -> bool:
         try:
             cursor = self.db_connection.cursor()
             cursor.execute(
-                "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-                (key, value)
+                "INSERT INTO settings(key, value, label, updated_at) VALUES(?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value, label=COALESCE(excluded.label, settings.label), updated_at=excluded.updated_at",
+                (key, value, label)
             )
             self.db_connection.commit()
             return True
@@ -869,6 +1049,129 @@ class MonitoringService:
                         except Exception:
                             pass
 
+                elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("config_get",):
+                    try:
+                        cursor = self.db_connection.cursor()
+                        items = []
+                        try:
+                            for k, v, lbl in cursor.execute("SELECT key, value, label FROM settings"):
+                                items.append({"key": k, "value": v, "label": lbl})
+                        except Exception:
+                            items = []
+                        layouts = []
+                        try:
+                            for c, ojson in cursor.execute("SELECT container, order_json FROM card_layouts"):
+                                try:
+                                    order = json.loads(ojson)
+                                except Exception:
+                                    order = []
+                                layouts.append({"container": c, "order": order})
+                        except Exception:
+                            layouts = []
+                        creds = []
+                        try:
+                            for et, ak, sk, pp, tn, demo in cursor.execute("SELECT exchange_type, api_key, api_secret, passphrase, testnet, is_demo FROM api_credentials"):
+                                creds.append({
+                                    "exchange_type": et or "okx",
+                                    "api_key": ak or "",
+                                    "api_secret": sk or "",
+                                    "passphrase": pp or "",
+                                    "testnet": tn or "false",
+                                    "is_demo": demo or "true",
+                                })
+                        except Exception:
+                            creds = []
+                        await websocket.send(json.dumps({"type": "config", "settings": items, "layouts": layouts, "creds": creds}))
+                    except Exception as e:
+                        try:
+                            await websocket.send(json.dumps({"type": "ack", "action": "config_get", "status": "error", "error": str(e)}))
+                        except Exception:
+                            pass
+                elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("config_set",):
+                    try:
+                        k = msg.get("key")
+                        v = msg.get("value")
+                        lbl = msg.get("label")
+                        ok = True
+                        if k is not None:
+                            ok = bool(self.set_setting(str(k), str(v), str(lbl) if lbl is not None else None))
+                        await websocket.send(json.dumps({"type": "ack", "action": "config_set", "status": "ok" if ok else "error"}))
+                    except Exception as e:
+                        try:
+                            await websocket.send(json.dumps({"type": "ack", "action": "config_set", "status": "error", "error": str(e)}))
+                        except Exception:
+                            pass
+                elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("layout_set",):
+                    try:
+                        container = str(msg.get("container", ""))
+                        order = msg.get("order")
+                        if not container or not isinstance(order, list):
+                            await websocket.send(json.dumps({"type": "ack", "action": "layout_set", "status": "error", "error": "参数不合法"}))
+                            return
+                        ojson = json.dumps(order, ensure_ascii=False)
+                        cursor = self.db_connection.cursor()
+                        cursor.execute(
+                            "INSERT INTO card_layouts(container, order_json, updated_at) VALUES(?, ?, CURRENT_TIMESTAMP) ON CONFLICT(container) DO UPDATE SET order_json=excluded.order_json, updated_at=excluded.updated_at",
+                            (container, ojson)
+                        )
+                        self.db_connection.commit()
+                        await websocket.send(json.dumps({"type": "ack", "action": "layout_set", "status": "ok"}))
+                    except Exception as e:
+                        try:
+                            await websocket.send(json.dumps({"type": "ack", "action": "layout_set", "status": "error", "error": str(e)}))
+                        except Exception:
+                            pass
+                elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("creds_set",):
+                    try:
+                        exchange_type = str(msg.get("exchange_type", "okx")).strip().lower()
+                        api_key = str(msg.get("api_key", ""))
+                        api_secret = str(msg.get("api_secret", ""))
+                        passphrase = str(msg.get("passphrase", ""))
+                        testnet = "true" if str(msg.get("testnet", "false")).lower() == "true" else "false"
+                        is_demo = "true" if str(msg.get("is_demo", "true")).lower() == "true" else "false"
+                        if not exchange_type:
+                            await websocket.send(json.dumps({"type": "ack", "action": "creds_set", "status": "error", "error": "交易所类型不能为空"}))
+                            return
+                        cursor = self.db_connection.cursor()
+                        cursor.execute(
+                            "INSERT INTO api_credentials(exchange_type, api_key, api_secret, passphrase, testnet, is_demo, updated_at) VALUES(?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(exchange_type) DO UPDATE SET api_key=excluded.api_key, api_secret=excluded.api_secret, passphrase=excluded.passphrase, testnet=excluded.testnet, is_demo=excluded.is_demo, updated_at=excluded.updated_at",
+                            (exchange_type, api_key, api_secret, passphrase, testnet, is_demo)
+                        )
+                        self.db_connection.commit()
+                        try:
+                            if callable(self.creds_callback):
+                                payload = {"exchange_type": exchange_type, "api_key": api_key, "api_secret": api_secret, "passphrase": passphrase, "testnet": testnet, "is_demo": is_demo}
+                                r = self.creds_callback(payload)
+                                if asyncio.iscoroutine(r):
+                                    await r
+                        except Exception:
+                            pass
+                        await websocket.send(json.dumps({"type": "ack", "action": "creds_set", "status": "ok"}))
+                    except Exception as e:
+                        try:
+                            await websocket.send(json.dumps({"type": "ack", "action": "creds_set", "status": "error", "error": str(e)}))
+                        except Exception:
+                            pass
+                elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("creds_get",):
+                    try:
+                        cursor = self.db_connection.cursor()
+                        rows = cursor.execute("SELECT exchange_type, api_key, api_secret, passphrase, testnet, is_demo FROM api_credentials").fetchall()
+                        out = []
+                        for et, ak, sk, pp, tn, demo in rows:
+                            out.append({
+                                "exchange_type": et or "okx",
+                                "api_key": ak or "",
+                                "api_secret": sk or "",
+                                "passphrase": pp or "",
+                                "testnet": tn or "false",
+                                "is_demo": demo or "true",
+                            })
+                        await websocket.send(json.dumps({"type": "creds", "items": out}))
+                    except Exception as e:
+                        try:
+                            await websocket.send(json.dumps({"type": "ack", "action": "creds_get", "status": "error", "error": str(e)}))
+                        except Exception:
+                            pass
                 else:
                     action = str(msg.get("action", "")).lower()
                     try:
@@ -987,6 +1290,9 @@ class MonitoringService:
 
     def register_timeframe_callback(self, callback):
         self.timeframe_callback = callback
+
+    def register_creds_callback(self, callback):
+        self.creds_callback = callback
 
 
 # 全局监控服务实例

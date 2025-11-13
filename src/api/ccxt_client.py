@@ -9,20 +9,41 @@ from loguru import logger
 
 
 class CCXTClient:
-    def __init__(self, api_key: str, secret: str, passphrase: str, testnet: bool = True):
+    def __init__(self, api_key: str, secret: str, passphrase: str, testnet: bool = True, exchange_type: str = "okx"):
         import ccxt.async_support as ccxt
         self.ccxt = ccxt
-        self.exchange = ccxt.okx({
-            'apiKey': api_key,
-            'secret': secret,
-            'password': passphrase,
-            'enableRateLimit': True,
-            'options': {
-                'defaultType': 'swap' if testnet else 'spot'
-            }
-        })
+        self.exchange_type = (exchange_type or "okx").lower()
+        if self.exchange_type == "okx":
+            self.exchange = ccxt.okx({
+                'apiKey': api_key,
+                'secret': secret,
+                'password': passphrase,
+                'enableRateLimit': True,
+                'options': { 'defaultType': 'swap' }
+            })
+        elif self.exchange_type == "binance":
+            self.exchange = ccxt.binance({
+                'apiKey': api_key,
+                'secret': secret,
+                'enableRateLimit': True,
+                'options': { 'defaultType': 'future' }
+            })
+        elif self.exchange_type == "bybit":
+            self.exchange = ccxt.bybit({
+                'apiKey': api_key,
+                'secret': secret,
+                'enableRateLimit': True,
+                'options': { 'defaultType': 'swap' }
+            })
+        else:
+            self.exchange = ccxt.okx({
+                'apiKey': api_key,
+                'secret': secret,
+                'password': passphrase,
+                'enableRateLimit': True,
+                'options': { 'defaultType': 'swap' }
+            })
         if testnet:
-            # OKX 测试网
             try:
                 self.exchange.setSandboxMode(True)
             except Exception:
@@ -32,13 +53,13 @@ class CCXTClient:
         self.api_debug = str(os.getenv("API_DEBUG", "false")).lower() == "true"
 
     def _convert_symbol(self, symbol: str) -> str:
-        """将 OKX 标准 instId 转换为 CCXT 市场符号"""
         try:
             s = symbol.upper()
             if s.endswith('-SWAP'):
                 base, quote, _ = s.split('-')
-                return f"{base}/{quote}:{quote}"
-            # 现货 BTC-USDT -> BTC/USDT
+                if self.exchange_type in ("okx", "bybit"):
+                    return f"{base}/{quote}:{quote}"
+                return f"{base}/{quote}"
             if '-' in s:
                 base, quote = s.split('-')
                 return f"{base}/{quote}"
