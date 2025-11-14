@@ -43,7 +43,8 @@ class SettingsStore:
                 api_secret TEXT,
                 passphrase TEXT,
                 testnet TEXT,
-                is_demo TEXT,
+                is_active TEXT,
+                extra_json TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -53,6 +54,10 @@ class SettingsStore:
             names = {c[1] for c in cols}
             if "exchange_type" not in names:
                 cur.execute("ALTER TABLE api_credentials ADD COLUMN exchange_type TEXT")
+            if "is_active" not in names:
+                cur.execute("ALTER TABLE api_credentials ADD COLUMN is_active TEXT")
+            if "extra_json" not in names:
+                cur.execute("ALTER TABLE api_credentials ADD COLUMN extra_json TEXT")
         except Exception:
             pass
         try:
@@ -143,37 +148,69 @@ class SettingsStore:
             cur = self.conn.cursor()
             if exchange_type:
                 row = cur.execute(
-                    "SELECT exchange_type, api_key, api_secret, passphrase, testnet, is_demo FROM api_credentials WHERE exchange_type = ?",
+                    "SELECT exchange_type, api_key, api_secret, passphrase, testnet, is_active, extra_json FROM api_credentials WHERE exchange_type = ?",
                     (exchange_type,)
                 ).fetchone()
             else:
                 row = cur.execute(
-                    "SELECT exchange_type, api_key, api_secret, passphrase, testnet, is_demo FROM api_credentials ORDER BY updated_at DESC LIMIT 1"
+                    "SELECT exchange_type, api_key, api_secret, passphrase, testnet, is_active, extra_json FROM api_credentials ORDER BY updated_at DESC LIMIT 1"
                 ).fetchone()
             if not row:
                 return None
+            try:
+                extra = json.loads(row[6]) if (row[6] or '').strip() else {}
+            except Exception:
+                extra = {}
             return {
                 "exchange_type": row[0] or "okx",
                 "api_key": row[1] or "",
                 "api_secret": row[2] or "",
                 "passphrase": row[3] or "",
                 "testnet": row[4] or "false",
-                "is_demo": row[5] or "true",
+                "is_active": row[5] or "false",
+                "extra": extra,
             }
         except Exception:
             return None
 
-    def set_credentials(self, exchange_type: str = "okx", api_key: str = "", api_secret: str = "", passphrase: str = "", testnet: str = "false", is_demo: str = "true"):
+    def set_credentials(self, exchange_type: str = "okx", api_key: str = "", api_secret: str = "", passphrase: str = "", testnet: str = "false", is_active: str = "false", extra: dict | None = None):
         try:
+            ej = json.dumps(extra or {}, ensure_ascii=False)
             cur = self.conn.cursor()
+            if str(is_active or "false").lower() == "true":
+                cur.execute("UPDATE api_credentials SET is_active='false' WHERE is_active='true'")
             cur.execute(
-                "INSERT INTO api_credentials(exchange_type, api_key, api_secret, passphrase, testnet, is_demo, updated_at) VALUES(?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(exchange_type) DO UPDATE SET api_key=excluded.api_key, api_secret=excluded.api_secret, passphrase=excluded.passphrase, testnet=excluded.testnet, is_demo=excluded.is_demo, updated_at=excluded.updated_at",
-                (exchange_type, api_key, api_secret, passphrase, testnet, is_demo)
+                "INSERT INTO api_credentials(exchange_type, api_key, api_secret, passphrase, testnet, is_active, extra_json, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(exchange_type) DO UPDATE SET api_key=excluded.api_key, api_secret=excluded.api_secret, passphrase=excluded.passphrase, testnet=excluded.testnet, is_active=excluded.is_active, extra_json=excluded.extra_json, updated_at=excluded.updated_at",
+                (exchange_type, api_key, api_secret, passphrase, testnet, str(is_active or "false").lower(), ej)
             )
             self.conn.commit()
             return True
         except Exception:
             return False
+
+    def get_active_credentials(self):
+        try:
+            cur = self.conn.cursor()
+            row = cur.execute(
+                "SELECT exchange_type, api_key, api_secret, passphrase, testnet, is_active, extra_json FROM api_credentials WHERE is_active = 'true' ORDER BY updated_at DESC LIMIT 1"
+            ).fetchone()
+            if not row:
+                return None
+            try:
+                extra = json.loads(row[6]) if (row[6] or '').strip() else {}
+            except Exception:
+                extra = {}
+            return {
+                "exchange_type": row[0] or "okx",
+                "api_key": row[1] or "",
+                "api_secret": row[2] or "",
+                "passphrase": row[3] or "",
+                "testnet": row[4] or "false",
+                "is_active": row[5] or "false",
+                "extra": extra,
+            }
+        except Exception:
+            return None
 
     def close(self):
         try:

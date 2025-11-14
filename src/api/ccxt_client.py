@@ -9,40 +9,31 @@ from loguru import logger
 
 
 class CCXTClient:
-    def __init__(self, api_key: str, secret: str, passphrase: str, testnet: bool = True, exchange_type: str = "okx"):
+    def __init__(self, api_key: str, secret: str, passphrase: str, testnet: bool = True, exchange_type: str = "okx", options: dict | None = None):
         import ccxt.async_support as ccxt
         self.ccxt = ccxt
         self.exchange_type = (exchange_type or "okx").lower()
-        if self.exchange_type == "okx":
-            self.exchange = ccxt.okx({
-                'apiKey': api_key,
-                'secret': secret,
-                'password': passphrase,
-                'enableRateLimit': True,
-                'options': { 'defaultType': 'swap' }
-            })
-        elif self.exchange_type == "binance":
-            self.exchange = ccxt.binance({
-                'apiKey': api_key,
-                'secret': secret,
-                'enableRateLimit': True,
-                'options': { 'defaultType': 'future' }
-            })
-        elif self.exchange_type == "bybit":
-            self.exchange = ccxt.bybit({
-                'apiKey': api_key,
-                'secret': secret,
-                'enableRateLimit': True,
-                'options': { 'defaultType': 'swap' }
-            })
-        else:
-            self.exchange = ccxt.okx({
-                'apiKey': api_key,
-                'secret': secret,
-                'password': passphrase,
-                'enableRateLimit': True,
-                'options': { 'defaultType': 'swap' }
-            })
+        opts = dict(options or {})
+        base_cfg = {
+            'apiKey': api_key,
+            'secret': secret,
+            'enableRateLimit': True,
+        }
+        if self.exchange_type == 'okx':
+            base_cfg['password'] = passphrase
+        if 'options' in opts:
+            base_cfg['options'] = opts['options']
+        elif self.exchange_type in ('okx','bybit'):
+            base_cfg['options'] = {'defaultType': 'swap'}
+        elif self.exchange_type in ('binance',):
+            base_cfg['options'] = {'defaultType': 'future'}
+        try:
+            ex_cls = getattr(ccxt, self.exchange_type, None)
+            if ex_cls is None:
+                ex_cls = ccxt.okx
+            self.exchange = ex_cls(base_cfg)
+        except Exception:
+            self.exchange = ccxt.okx(base_cfg)
         if testnet:
             try:
                 self.exchange.setSandboxMode(True)
@@ -152,3 +143,10 @@ class CCXTClient:
             await self.exchange.close()
         except Exception:
             pass
+
+    async def get_account_balance(self) -> Dict[str, Any]:
+        try:
+            bal = await self.exchange.fetch_balance()
+            return { 'success': True, 'data': bal }
+        except Exception as e:
+            return { 'success': False, 'error': str(e) }

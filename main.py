@@ -135,7 +135,12 @@ class TradingBot:
             v = store.get("trading_timeframe")
             if v: config["trading_timeframe"] = v
             # 凭据（按后端读取）
-            creds = store.get_credentials(config.get("exchange_type", None))
+            active = None
+            try:
+                active = store.get_active_credentials()
+            except Exception:
+                active = None
+            creds = active or store.get_credentials(config.get("exchange_type", None))
             if creds:
                 config["api_key"] = creds.get("api_key", "")
                 config["api_secret"] = creds.get("api_secret", "")
@@ -144,9 +149,9 @@ class TradingBot:
                 et = creds.get("exchange_type", "okx")
                 if et:
                     config["exchange_type"] = et
-                is_demo = str(creds.get("is_demo", "true")).lower() == "true"
-                if is_demo:
-                    config["trading_mode"] = "demo"
+                extra = creds.get("extra") or {}
+                if isinstance(extra, dict):
+                    config["exchange_options"] = extra
         except Exception:
             pass
 
@@ -208,7 +213,8 @@ class TradingBot:
                 secret=self.config["api_secret"],
                 passphrase=self.config["passphrase"],
                 testnet=self.config["testnet"],
-                exchange_type=self.config.get("exchange_type", "okx")
+                exchange_type=self.config.get("exchange_type", "okx"),
+                options=self.config.get("exchange_options", {})
             )
             
             # 测试API连接
@@ -227,7 +233,8 @@ class TradingBot:
                     secret=self.config["api_secret"],
                     passphrase=self.config["passphrase"],
                     testnet=self.config["testnet"],
-                    exchange_type=self.config.get("exchange_type", "okx")
+                    exchange_type=self.config.get("exchange_type", "okx"),
+                    options=self.config.get("exchange_options", {})
                 )
             except Exception:
                 self.ccxt_public = None
@@ -327,47 +334,7 @@ class TradingBot:
     async def _register_strategies(self):
         """注册交易策略"""
         enabled_strategies = self.config["strategies"]
-        
-        if "ma_cross" in enabled_strategies:
-            ma_config = {
-                "fast_period": self.config.get("ma_short_period", 20),
-                "slow_period": self.config.get("ma_long_period", 50),
-                "ma_type": "EMA",
-                "stop_loss": 0.02,
-                "take_profit": 0.04,
-                "min_confidence": 0.6
-            }
-            ma_strategy = MovingAverageCrossStrategy(ma_config)
-            self.strategy_manager.register_strategy(ma_strategy)
-            logger.info("已注册均线交叉策略")
-        
-        if "rsi" in enabled_strategies:
-            rsi_config = {
-                "period": self.config.get("rsi_period", 14),
-                "overbought": self.config.get("rsi_overbought", 70),
-                "oversold": self.config.get("rsi_oversold", 30),
-                "stop_loss": 0.02,
-                "take_profit": 0.04,
-                "min_confidence": 0.6
-            }
-            rsi_strategy = RSIStrategy(rsi_config)
-            self.strategy_manager.register_strategy(rsi_strategy)
-            logger.info("已注册RSI策略")
-        
-        if "grid" in enabled_strategies:
-            grid_config = {
-                "grid_count": self.config.get("grid_levels", 10),
-                "price_range": self.config.get("grid_spacing", 0.05),
-                "base_price": None,
-                "grid_size": 0.01,
-                "max_position": 1.0,
-                "min_confidence": 0.7
-            }
-            grid_strategy = GridTradingStrategy(grid_config)
-            self.strategy_manager.register_strategy(grid_strategy)
-            logger.info("已注册网格交易策略")
-
-        # 新增：根据配置启用合并策略或单独策略
+        # 仅支持 KDJ+MACD 合并策略
         if "kdj_macd" in enabled_strategies:
             # 优先注册合并策略
             from strategies.kdj_macd_strategy import KDJMACDStrategy
@@ -390,34 +357,7 @@ class TradingBot:
             self.strategy_manager.register_strategy(cm_strategy)
             logger.info("已注册KDJ+MACD合并策略")
         else:
-            # 兼容旧配置：分别注册KDJ与MACD
-            if "kdj" in enabled_strategies:
-                from strategies.kdj_strategy import KDJStrategy
-                kdj_config = {
-                    "period": self.config.get("kdj_period", 9),
-                    "oversold": 20,
-                    "overbought": 80,
-                    "stop_loss": 0.02,
-                    "take_profit": 0.04,
-                    "min_confidence": 0.55,
-                }
-                kdj_strategy = KDJStrategy(kdj_config)
-                self.strategy_manager.register_strategy(kdj_strategy)
-                logger.info("已注册KDJ策略")
-
-            if "macd" in enabled_strategies:
-                from strategies.macd_strategy import MACDStrategy
-                macd_config = {
-                    "fast": 5,
-                    "slow": 13,
-                    "signal": 4,
-                    "stop_loss": 0.02,
-                    "take_profit": 0.04,
-                    "min_confidence": 0.55,
-                }
-                macd_strategy = MACDStrategy(macd_config)
-                self.strategy_manager.register_strategy(macd_strategy)
-                logger.info("已注册MACD策略")
+            logger.warning("未启用任何已支持的策略；请在配置中添加 'kdj_macd'")
     
     async def start(self):
         """启动交易机器人"""
@@ -535,6 +475,18 @@ class TradingBot:
             
             # 关闭WebSocket连接
             await self.ws_client.disconnect()
+
+            # 关闭交易所连接（CCXT 异步客户端）
+            try:
+                if getattr(self, "api_client", None):
+                    await self.api_client.close()
+            except Exception:
+                pass
+            try:
+                if getattr(self, "ccxt_public", None):
+                    await self.ccxt_public.close()
+            except Exception:
+                pass
             
             # 取消所有任务
             for task in self.tasks:
@@ -1337,15 +1289,17 @@ class TradingBot:
             api_secret = str(payload.get("api_secret", ""))
             passphrase = str(payload.get("passphrase", ""))
             testnet = str(payload.get("testnet", "false")).lower() == "true"
-            is_demo = str(payload.get("is_demo", "true")).lower() == "true"
+            is_active = str(payload.get("is_active", "false")).lower() == "true"
+            extra = payload.get("extra") or {}
             self.config["api_backend"] = backend
             self.config["exchange_type"] = exchange_type
             self.config["api_key"] = api_key
             self.config["api_secret"] = api_secret
             self.config["passphrase"] = passphrase
             self.config["testnet"] = testnet
-            if is_demo:
-                self.config["trading_mode"] = "demo"
+            self.config["exchange_options"] = extra if isinstance(extra, dict) else {}
+            if is_active:
+                self.config["exchange_type"] = exchange_type
             try:
                 if getattr(self, "api_client", None):
                     await self.api_client.close()
@@ -1362,14 +1316,16 @@ class TradingBot:
                     secret=self.config["api_secret"],
                     passphrase=self.config["passphrase"],
                     testnet=self.config["testnet"],
-                    exchange_type=self.config.get("exchange_type", "okx")
+                    exchange_type=self.config.get("exchange_type", "okx"),
+                    options=self.config.get("exchange_options", {})
                 )
                 self.ccxt_public = CCXTClient(
                     api_key=self.config["api_key"],
                     secret=self.config["api_secret"],
                     passphrase=self.config["passphrase"],
                     testnet=self.config["testnet"],
-                    exchange_type=self.config.get("exchange_type", "okx")
+                    exchange_type=self.config.get("exchange_type", "okx"),
+                    options=self.config.get("exchange_options", {})
                 )
             except Exception:
                 return

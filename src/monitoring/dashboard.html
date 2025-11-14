@@ -58,6 +58,7 @@
             height: 520px;
             overflow-y: auto;
             overflow-x: hidden;
+            position: relative;
         }
 
         .card:hover {
@@ -266,6 +267,15 @@
             gap: 8px;
             justify-content: flex-end;
         }
+        .param-actions.fixed-bottom {
+            position: absolute;
+            right: 20px;
+            bottom: 20px;
+            left: 20px;
+            padding-top: 10px;
+            border-top: 1px solid #ecf0f1;
+            background: rgba(255,255,255,0.92);
+        }
 
         .card-settings {
             display: flex;
@@ -331,6 +341,28 @@
             align-items: center;
             margin: 8px 0;
         }
+        .form-row input, .form-row select, .form-row textarea {
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .form-row .select-wrap {
+            width: 100%;
+            min-width: 0;
+            position: relative;
+        }
+        .form-row .select-wrap::after {
+            content: '';
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            margin-top: -6px;
+            width: 0;
+            height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-top: 8px solid #95a5a6;
+            pointer-events: none;
+        }
         .form-row label {
             color: #7f8c8d;
         }
@@ -350,6 +382,9 @@
             display: flex;
             align-items: center;
             gap: 6px;
+        }
+        .star-badge {
+            color: #e74c3c;
         }
         .param-chips {
             display: flex;
@@ -383,6 +418,66 @@
             border-radius: 8px;
             transition: box-shadow 0.2s ease, border-color 0.2s ease;
             background: #fff;
+        }
+        .dropdown-input {
+            cursor: pointer;
+            padding-right: 32px;
+            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24'><path fill='%2395a5a6' d='M7 10l5 5 5-5z'/></svg>");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            background-size: 16px;
+        }
+        .btn-compact { padding: 4px 8px; font-size: 12px; line-height: 1.2; }
+        .btn-activation { color: #3498db; border-color: #3498db; }
+        .btn-activation:hover { background: #eaf4fd; }
+        .dropdown-panel {
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: calc(100% + 6px);
+            border: 1px solid #e6eaee;
+            border-radius: 6px;
+            background: #fff;
+            overflow-y: auto;
+            display: none;
+            z-index: 1000;
+        }
+        #tfSelectPanel {
+            right: auto;
+            width: 80px;
+            min-width: 80px;
+            z-index: 5000;
+            height: 200px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        #tfSelectWrap { position: relative; }
+        .dropdown-item {
+            padding: 8px 10px;
+            cursor: pointer;
+            border-bottom: 1px solid #f2f4f7;
+        }
+        .dropdown-item:hover {
+            background: #f7fafc;
+        }
+        #tfSelectInput {
+            width: 80px;
+            min-width: 80px;
+            padding: 10px 12px;
+            border: 1px solid #e6eaee;
+            border-radius: 8px;
+        }
+        #tfSelectWrap {
+            display: inline-block;
+        }
+        #credsList {
+            max-height: none;
+            overflow: visible;
+            padding-bottom: 0;
+        }
+        .card[data-card-id="card-creds"] {
+            height: 520px;
+            overflow-y: hidden;
         }
         .modal-body input:focus, .modal-body select:focus {
             outline: none;
@@ -418,7 +513,10 @@
             <button class="btn btn-danger" id="btnStop" onclick="stopAutoTrading()" style="display:none">⏸️ 停止自动交易</button>
             <span style="margin-left:10px"></span>
             <label style="color:#fff; margin-right:6px;">周期</label>
-            <select id="tfSelect" onchange="updateTimeframe()"></select>
+            <div class="select-wrap" id="tfSelectWrap" style="width:80px; min-width:80px">
+                <input id="tfSelectInput" type="text" readonly class="dropdown-input" value="" />
+                <div id="tfSelectPanel" class="dropdown-panel"></div>
+            </div>
         </div>
 
         <div class="dashboard">
@@ -459,15 +557,17 @@
                             <div id="settingsList" class="param-chips"><span class="param-empty">--</span></div>
                         </div>
                     </div>
-                    <div class="param-actions" style="border-top: 1px solid #ecf0f1; padding-top: 10px;">
+                    <div class="param-actions fixed-bottom">
                         <button class="btn" onclick="openSettingsModal()">设置配置</button>
                     </div>
                 </div>
                 <div class="card" data-card-id="card-creds">
                     <h3>🔐 交易所凭据</h3>
                     <div class="param-group-title">当前凭据</div>
-                    <div id="credsList" class="param-chips"><span class="param-empty">--</span></div>
-                    <div class="param-actions" style="border-top: 1px solid #ecf0f1; padding-top: 10px;">
+                    <div id="credsListWrap" style="max-height: calc(100% - 120px); overflow-y: auto; padding-right: 4px;">
+                        <div id="credsList" class="param-chips"><span class="param-empty">--</span></div>
+                    </div>
+                    <div class="param-actions fixed-bottom">
                         <button class="btn" onclick="openCredsModal()">编辑凭据</button>
                     </div>
                 </div>
@@ -492,7 +592,7 @@
                     <div class="param-group-title">MACD 当前值</div>
                     <div class="param-chips" id="macdValueChips"><span class="param-empty">--</span></div>
                 </div>
-                <div class="param-actions" style="border-top: 1px solid #ecf0f1; padding-top: 10px;">
+                <div class="param-actions fixed-bottom">
                     <button class="btn" onclick="openParamModal()">设置参数</button>
                 </div>
             </div>
@@ -623,7 +723,7 @@
                 </div>
                 <div class="modal-actions">
                     <button class="btn-secondary btn" onclick="closeConfigModal()">取消</button>
-                    <button class="btn" onclick="submitConfigForm()">保存并应用</button>
+                    <button class="btn" onclick="submitConfigForm()">保存</button>
                 </div>
             </div>
         </div>
@@ -665,7 +765,7 @@
                 </div>
                 <div class="modal-actions">
                     <button class="btn-secondary btn" onclick="closeParamModal()">取消</button>
-                    <button class="btn" onclick="submitDynamicParams()">保存并应用</button>
+                    <button class="btn" onclick="submitDynamicParams()">保存</button>
                 </div>
             </div>
         </div>
@@ -705,6 +805,10 @@
                     this.socket.onopen = () => {
                         this.updateConnectionStatus(true);
                         this.logEvent('系统', 'WebSocket连接已建立', 'success');
+                        try {
+                            const orig = this.socket.send.bind(this.socket);
+                            this.socket.send = (msg) => { try { const obj = typeof msg === 'string' ? JSON.parse(msg) : msg; console.log('WS send', obj); } catch (e) { console.log('WS send raw', msg); } return orig(msg); };
+                        } catch (_) {}
                         try { fetchConfig(); } catch (_) {}
                     };
 
@@ -721,34 +825,76 @@
                     this.socket.onmessage = (event) => {
                         try {
                             const data = JSON.parse(event.data);
+                            try { console.log('WS recv', data); } catch (_) {}
                             if (data.type === 'config') {
                                 try {
-                                    window.latestSettings = data.settings || [];
-                                    window.latestLayouts = data.layouts || [];
-                                    window.latestCreds = data.creds || [];
-                                    renderSettings(window.latestSettings);
-                                    renderCreds(window.latestCreds);
+                                    renderSettings(data.settings || []);
+                                    renderCreds(data.creds || []);
+                                    try { adjustCredsListHeight(); } catch (_) {}
                                     this.logEvent('系统', '配置已刷新', 'success');
-                                    applyCardOrder('card_order_main');
-                                    applyCardOrder('card_order_settings');
+                                    try { document.body.dataset.ccxtExchanges = JSON.stringify(Array.isArray(data.ccxt_exchanges) ? data.ccxt_exchanges : []); } catch (_) {}
+                                    try { applyCardOrderFromLayouts(data.layouts || []); } catch (_) {}
+                                } catch (_) {}
+                                return;
+                            }
+                            if (data.type === 'creds') {
+                                try {
+                                    const items = Array.isArray(data.items) ? data.items : [];
+                                    if (items.length) {
+                                        const it = items[0];
+                                        try {
+                                            const mode = (document.body.dataset && document.body.dataset.configMode) ? document.body.dataset.configMode : '';
+                                            if (mode === 'creds') {
+                                                const keyEl = document.getElementById('creds_key');
+                                                const secretEl = document.getElementById('creds_secret');
+                                                const passEl = document.getElementById('creds_pass');
+                                                const tnEl = document.getElementById('creds_testnet_input');
+                                                const actEl = document.getElementById('creds_active_input');
+                                                const extraEl = document.getElementById('creds_extra');
+                                                if (keyEl) keyEl.value = String(it.api_key || '');
+                                                if (secretEl) secretEl.value = String(it.api_secret || '');
+                                                if (passEl) passEl.value = String(it.passphrase || '');
+                                                if (tnEl) tnEl.value = String(it.testnet || 'false').toLowerCase() === 'true' ? 'true' : 'false';
+                                                if (actEl) actEl.value = String(it.is_active || 'false').toLowerCase() === 'true' ? 'true' : 'false';
+                                                if (extraEl) { try { extraEl.value = JSON.stringify(it.extra || {}, null, 2); } catch (_) { extraEl.value = '{}'; } }
+                                            }
+                                        } catch (_) {}
+                                    }
+                                    try { renderCreds(items); adjustCredsListHeight(); } catch (_) {}
+                                    try {
+                                        const pending = (document.body.dataset && document.body.dataset.pendingActivateEx) ? document.body.dataset.pendingActivateEx : '';
+                                        if (pending) {
+                                            const rec = items.find(x => String(x.exchange_type || '').toLowerCase() === String(pending).toLowerCase());
+                                            if (rec && dashboard && dashboard.socket && dashboard.socket.readyState === WebSocket.OPEN) {
+                                                const ex = rec.exchange_type || pending;
+                                                const api_key = rec.api_key || '';
+                                                const api_secret = rec.api_secret || '';
+                                                const passphrase = rec.passphrase || '';
+                                                const testnet = String(rec.testnet || 'false').toLowerCase() === 'true' ? 'true' : 'false';
+                                                const extra = rec.extra || {};
+                                                dashboard.socket.send(JSON.stringify({ type: 'creds_set', exchange_type: ex, api_key, api_secret, passphrase, testnet, is_active: 'true', extra }));
+                                            }
+                                            document.body.dataset.pendingActivateEx = '';
+                                        }
+                                    } catch (_) {}
                                 } catch (_) {}
                                 return;
                             }
                             if (data.type === 'ack' && data.action) {
                                 if (data.action === 'timeframe') {
-                                    const sel = document.getElementById('tfSelect');
-                                    if (sel) sel.disabled = false;
+                                    const tfInput = document.getElementById('tfSelectInput');
+                                    if (tfInput) tfInput.disabled = false;
                                     if (data.status === 'ok') {
                                         const tf = String(data.timeframe || '');
                                         if (tf) {
                                             const el = document.getElementById('currentTimeframe');
                                             if (el) el.textContent = tf;
-                                            if (sel) sel.value = tf;
+                                            if (tfInput) { tfInput.value = tf; tfInput.dataset.value = tf; }
                                         }
                                         this.logEvent('系统', '周期更新成功', 'success');
                                     } else {
                                         const prev = window.prevTf;
-                                        if (sel && prev) sel.value = prev;
+                                        if (tfInput && prev) { tfInput.dataset.value = prev; tfInput.value = prev; }
                                         this.logEvent('系统', `周期更新失败: ${data.error || ''}`, 'error');
                                     }
                                     window.prevTf = undefined;
@@ -763,15 +909,18 @@
                                     if (data.status === 'ok') {
                                         fetchConfig();
                                         this.logEvent('系统', '配置更新成功', 'success');
+                                        try { if (window.pendingModalClose === 'settings') closeConfigModal(); } catch (_) {}
                                     } else {
                                         this.logEvent('系统', `配置更新失败: ${data.error || ''}`, 'error');
                                     }
+                                    window.pendingModalClose = null;
                                 } catch (_) {}
                                 return;
                             }
                             if (data.type === 'ack' && data.action === 'creds_set') {
                                 try {
                                     if (data.status === 'ok') {
+                                        try { if (dashboard && dashboard.socket && dashboard.socket.readyState === WebSocket.OPEN) { dashboard.socket.send(JSON.stringify({ type: 'creds_get' })); } } catch (_) {}
                                         fetchConfig();
                                         this.logEvent('系统', '凭据更新成功', 'success');
                                     } else {
@@ -901,21 +1050,9 @@
                 document.getElementById('openPositions').textContent = data.open_positions;
                 try {
                     document.getElementById('currentTimeframe').textContent = String(data.timeframe || '1m');
-                    const sel = document.getElementById('tfSelect');
-                    if (sel && data.timeframe) sel.value = String(data.timeframe);
                     const opts = Array.isArray(data.timeframe_options) ? data.timeframe_options : null;
-                    if (sel && opts && opts.length) {
-                        const prev = sel.value;
-                        sel.innerHTML = '';
-                        opts.forEach(o => {
-                            const opt = document.createElement('option');
-                            opt.value = o;
-                            opt.textContent = tfLabel(o);
-                            sel.appendChild(opt);
-                        });
-                        if (prev && opts.includes(prev)) sel.value = prev; else if (data.timeframe) sel.value = String(data.timeframe);
-                    }
                     try { window.latestTimeframeOptions = opts || window.latestTimeframeOptions; } catch (_) {}
+                    try { renderTfDropdown(opts || window.latestTimeframeOptions || ['1m','5m','15m','1h','4h'], String(data.timeframe || '1m')); } catch (_) {}
                 } catch (_) {}
                 try {
                     const cp = Number(data.current_price ?? 0);
@@ -1241,7 +1378,6 @@
             try {
                 const arr = Array.isArray(items) ? items : [];
                 if (!arr.length) { container.innerHTML = '<span class="param-empty">--</span>'; return; }
-                window.latestSettings = arr;
                 const labelMap = {};
                 arr.forEach(it => { if (it && it.key) labelMap[it.key] = it.label || null; });
                 arr.forEach(it => {
@@ -1249,8 +1385,7 @@
                     const chip = document.createElement('span');
                     chip.className = 'param-chip';
                     const display = labelMap[k] || k;
-                    const btn = `<button class='btn' style='margin-left:8px' onclick="openSettingsModal('${k}')">编辑</button>`;
-                    chip.innerHTML = `<span class='chip-key'>${display}</span><span class='chip-value'>${v}</span>${btn}`;
+                    chip.innerHTML = `<span class='chip-key'>${display}</span><span class='chip-value'>${v}</span>`;
                     container.appendChild(chip);
                 });
             } catch (_) { container.innerHTML = '<span class="param-empty">--</span>'; }
@@ -1262,20 +1397,60 @@
             container.innerHTML = '';
             const arr = Array.isArray(items) ? items : [];
             if (!arr.length) { container.innerHTML = '<span class="param-empty">--</span>'; return; }
-            window.latestCreds = arr;
-            arr.forEach(it => {
-                const chip = document.createElement('span');
-                chip.className = 'param-chip';
-                const exchange = it.exchange_type || 'okx';
-                const tn = (String(it.testnet || 'false').toLowerCase() === 'true');
-                const demo = (String(it.is_demo || 'true').toLowerCase() === 'true');
-                const btn = `<button class='btn' style='margin-left:8px' onclick="openCredsModal('${exchange}')">编辑</button>`;
-                chip.innerHTML = ` <span class='chip-key'>交易所</span><span class='chip-value'>${exchange}</span>`+
-                                 ` <span class='chip-key'>测试网</span><span class='chip-value'>${tn ? '是' : '否'}</span>`+
-                                 ` <span class='chip-key'>演示</span><span class='chip-value'>${demo ? '是' : '否'}</span>`+
-                                 btn;
-                container.appendChild(chip);
+            const normalize = (x) => String((x && x.exchange_type) || '').toLowerCase();
+            const isAct = (x) => String((x && x.is_active) || 'false').toLowerCase() === 'true';
+            let recs = arr.slice();
+            let actives = recs.filter(isAct);
+            let others = recs.filter(x => !isAct(x));
+            actives.sort((a,b) => normalize(a).localeCompare(normalize(b)));
+            others.sort((a,b) => normalize(a).localeCompare(normalize(b)));
+            const hasActive = actives.length > 0;
+            const view = actives.concat(others);
+            view.forEach(rec => {
+                const ex = String(rec.exchange_type || '').toLowerCase();
+                const group = document.createElement('div');
+                group.className = 'param-group';
+                const title = document.createElement('div');
+                title.className = 'param-group-title';
+                const name = rec.exchange_type || ex || '--';
+                const star = isAct(rec) ? '<span class="star-badge">★</span>' : '';
+                const actBtn = (!isAct(rec)) ? `<button class="btn btn-secondary btn-compact btn-activation" style="margin-left:6px" onclick="activateExchange('${ex}')">设为激活</button>` : '';
+                title.innerHTML = `交易所（${name}）${star}${actBtn}`;
+                const chipsWrap = document.createElement('div');
+                chipsWrap.className = 'param-chips';
+                const fields = [
+                    { k: 'API Key', v: rec.api_key || '' },
+                    { k: 'API Secret', v: rec.api_secret || '' },
+                    { k: 'Passphrase', v: rec.passphrase || '' },
+                    { k: '测试网', v: (String(rec.testnet || 'false').toLowerCase() === 'true') ? '是' : '否' },
+                    { k: '激活', v: (isAct(rec) ? '是' : '否') }
+                ];
+                try {
+                    const extra = rec.extra || {};
+                    const opt = extra.options || extra;
+                    if (opt && opt.defaultType) {
+                        fields.push({ k: 'defaultType', v: String(opt.defaultType) });
+                    }
+                } catch (_) {}
+                fields.forEach(f => {
+                    const chip = document.createElement('span');
+                    chip.className = 'param-chip';
+                    chip.innerHTML = ` <span class='chip-key'>${f.k}</span><span class='chip-value'>${f.v}</span>`;
+                    chipsWrap.appendChild(chip);
+                });
+                group.appendChild(title);
+                group.appendChild(chipsWrap);
+                container.appendChild(group);
             });
+            try { adjustCredsListHeight(); } catch (_) {}
+        }
+
+        function activateExchange(ex) {
+            try {
+                if (!dashboard || !dashboard.socket || dashboard.socket.readyState !== WebSocket.OPEN) return;
+                try { document.body.dataset.pendingActivateEx = String(ex || '').toLowerCase(); } catch (_) {}
+                dashboard.socket.send(JSON.stringify({ type: 'creds_get', exchange_type: ex }));
+            } catch (_) {}
         }
 
         
@@ -1310,11 +1485,19 @@
             keyRow.className = 'form-row';
             const keyLabel = document.createElement('label');
             keyLabel.textContent = '键';
-            const keySelect = document.createElement('select');
-            keySelect.id = 'cfg_key';
-            defs.forEach(d => { const o = document.createElement('option'); o.value = d.key; o.textContent = d.key; keySelect.appendChild(o); });
-            if (editKey) keySelect.value = editKey;
-            keyRow.appendChild(keyLabel); keyRow.appendChild(keySelect); container.appendChild(keyRow);
+            const keyWrap = document.createElement('div'); keyWrap.className = 'select-wrap';
+            const keyInput = document.createElement('input'); keyInput.id = 'cfg_key'; keyInput.type = 'text'; keyInput.readOnly = true;
+            const keyPanel = document.createElement('div'); keyPanel.className = 'dropdown-panel';
+            const initialKey = editKey || (defs[0] ? defs[0].key : '');
+            keyInput.value = initialKey;
+            try { const mh = overlay.querySelector('.modal')?.clientHeight || 0; if (mh > 0) { keyPanel.style.maxHeight = Math.floor(mh * 0.8) + 'px'; } } catch(_){}
+            defs.forEach(d => { const item = document.createElement('div'); item.className = 'dropdown-item'; item.textContent = d.key; item.addEventListener('click', function(){ keyInput.value = d.key; keyPanel.style.display = 'none'; try { renderInput(); } catch(_){} }); keyPanel.appendChild(item); });
+            keyInput.addEventListener('click', function(){ keyPanel.style.display = 'block'; });
+            keyInput.addEventListener('focus', function(){ keyPanel.style.display = 'block'; });
+            document.addEventListener('click', function(e){ try { if (!keyWrap.contains(e.target)) keyPanel.style.display = 'none'; } catch(_){} });
+            keyWrap.appendChild(keyInput);
+            keyWrap.appendChild(keyPanel);
+            keyRow.appendChild(keyLabel); keyRow.appendChild(keyWrap); container.appendChild(keyRow);
             const valRow = document.createElement('div');
             valRow.className = 'form-row';
             const valLabel = document.createElement('label');
@@ -1331,35 +1514,67 @@
             hint.id = 'cfg_hint';
             container.appendChild(hint);
             const renderInput = () => {
-                const k = keySelect.value;
+                const k = (document.getElementById('cfg_key')?.value) || '';
                 const def = defs.find(x => x.key === k) || { type: 'string' };
                 valueWrap.innerHTML = '';
                 let inputEl;
                 if (def.type === 'boolean') {
-                    inputEl = document.createElement('select');
-                    ['true','false'].forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; inputEl.appendChild(o); });
+                    const rightColB = document.createElement('div'); rightColB.className = 'select-wrap';
+                    const bInput = document.createElement('input'); bInput.id = 'cfg_value'; bInput.type = 'text'; bInput.readOnly = true;
+                    const bPanel = document.createElement('div'); bPanel.className = 'dropdown-panel';
+                    try { const mh = overlay.querySelector('.modal')?.clientHeight || 0; if (mh > 0) { bPanel.style.maxHeight = Math.floor(mh * 0.8) + 'px'; } } catch(_){}
+                    ['true','false'].forEach(v => { const item = document.createElement('div'); item.className = 'dropdown-item'; item.textContent = v; item.addEventListener('click', function(){ bInput.value = v; bPanel.style.display = 'none'; }); bPanel.appendChild(item); });
+                    bInput.addEventListener('click', function(){ bPanel.style.display = 'block'; });
+                    bInput.addEventListener('focus', function(){ bPanel.style.display = 'block'; });
+                    document.addEventListener('click', function(e){ try { if (!rightColB.contains(e.target)) bPanel.style.display = 'none'; } catch(_){} });
+                    rightColB.appendChild(bInput);
+                    rightColB.appendChild(bPanel);
+                    inputEl = rightColB;
                 } else if (def.type === 'enum') {
-                    inputEl = document.createElement('select');
-                    (def.options || []).forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; inputEl.appendChild(o); });
+                    const rightColE = document.createElement('div'); rightColE.className = 'select-wrap';
+                    const eInput = document.createElement('input'); eInput.id = 'cfg_value'; eInput.type = 'text'; eInput.readOnly = true;
+                    const ePanel = document.createElement('div'); ePanel.className = 'dropdown-panel';
+                    const options = def.options || [];
+                    try { const mh = overlay.querySelector('.modal')?.clientHeight || 0; if (mh > 0) { ePanel.style.maxHeight = Math.floor(mh * 0.8) + 'px'; } } catch(_){}
+                    options.forEach(v => { const item = document.createElement('div'); item.className = 'dropdown-item'; item.textContent = String(v); item.addEventListener('click', function(){ eInput.value = String(v); ePanel.style.display = 'none'; }); ePanel.appendChild(item); });
+                    eInput.addEventListener('click', function(){ ePanel.style.display = 'block'; });
+                    eInput.addEventListener('focus', function(){ ePanel.style.display = 'block'; });
+                    document.addEventListener('click', function(e){ try { if (!rightColE.contains(e.target)) ePanel.style.display = 'none'; } catch(_){} });
+                    rightColE.appendChild(eInput);
+                    rightColE.appendChild(ePanel);
+                    inputEl = rightColE;
                 } else if (def.type === 'timeframe') {
-                    inputEl = document.createElement('select');
+                    const rightCol = document.createElement('div'); rightCol.className = 'select-wrap';
+                    const tfInput = document.createElement('input'); tfInput.id = 'cfg_value'; tfInput.type = 'text'; tfInput.readOnly = true;
+                    const panel = document.createElement('div'); panel.className = 'dropdown-panel';
                     const opts = (window.latestTimeframeOptions || ['1m','5m','15m','1h','4h']);
-                    opts.forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; inputEl.appendChild(o); });
+                    const modalEl = document.getElementById('configModalOverlay');
+                    try { const mh = modalEl ? modalEl.querySelector('.modal').clientHeight : 0; if (mh > 0) { panel.style.maxHeight = Math.floor(mh * 0.8) + 'px'; } } catch (_) {}
+                    opts.forEach(v => { const item = document.createElement('div'); item.className = 'dropdown-item'; item.textContent = tfLabel(v); item.addEventListener('click', function(){ tfInput.value = v; panel.style.display = 'none'; }); panel.appendChild(item); });
+                    tfInput.addEventListener('click', function(){ panel.style.display = 'block'; });
+                    tfInput.addEventListener('focus', function(){ panel.style.display = 'block'; });
+                    document.addEventListener('click', function(e){ try { if (!rightCol.contains(e.target)) panel.style.display = 'none'; } catch(_){} });
+                    rightCol.appendChild(tfInput);
+                    rightCol.appendChild(panel);
+                    inputEl = rightCol;
                 } else {
                     inputEl = document.createElement('input');
                     inputEl.type = 'text';
                 }
-                inputEl.id = 'cfg_value';
                 valueWrap.appendChild(inputEl);
                 const arr = window.latestSettings || [];
                 if (Array.isArray(arr)) {
                     const it = arr.find(x => x && x.key === k);
-                    if (it && it.value !== undefined) inputEl.value = String(it.value);
+                    if (it && it.value !== undefined) {
+                        const val = String(it.value);
+                        const tfInput = document.getElementById('cfg_value');
+                        if (tfInput) tfInput.value = val; else inputEl.value = val;
+                    }
                     if (it && it.label !== undefined && it.label !== null) labInput.value = String(it.label);
                 }
                 hint.textContent = def.type === 'timeframe' ? '选择交易所支持的周期' : def.type === 'enum' ? `允许值: ${(def.options||[]).join(', ')}` : def.type === 'boolean' ? 'true/false' : '文本';
             };
-            keySelect.addEventListener('change', renderInput);
+            // 自定义下拉由点击选项触发 renderInput
             renderInput();
             window.configModalMode = 'settings';
         }
@@ -1392,19 +1607,22 @@
                     closeConfigModal();
                     return;
                 } else if (window.configModalMode === 'creds') {
-                    const exchangeEl = document.getElementById('creds_exchange');
+                    const exchangeEl = document.getElementById('creds_exchange_input');
                     const keyEl = document.getElementById('creds_key');
                     const secretEl = document.getElementById('creds_secret');
                     const passEl = document.getElementById('creds_pass');
-                    const tnEl = document.getElementById('creds_testnet');
-                    const demoEl = document.getElementById('creds_demo');
-                    const exchange_type = exchangeEl.value || 'okx';
+                    const tnEl = document.getElementById('creds_testnet_input');
+                    const actEl = document.getElementById('creds_active_input');
+                    const extraEl = document.getElementById('creds_extra');
+                    const exchange_type = (exchangeEl && exchangeEl.value) ? exchangeEl.value : 'okx';
                     const api_key = keyEl.value || '';
                     const api_secret = secretEl.value || '';
                     const passphrase = passEl.value || '';
                     const testnet = String(tnEl.value || 'false').toLowerCase() === 'true' ? 'true' : 'false';
-                    const is_demo = String(demoEl.value || 'true').toLowerCase() === 'true' ? 'true' : 'false';
-                    dashboard.socket.send(JSON.stringify({ type: 'creds_set', exchange_type, api_key, api_secret, passphrase, testnet, is_demo }));
+                    const is_active = String((actEl && actEl.value) || 'false').toLowerCase() === 'true' ? 'true' : 'false';
+                    let extra = {};
+                    try { extra = JSON.parse((extraEl && extraEl.value) ? extraEl.value : '{}'); } catch (e) { alert('额外配置需为合法JSON'); return; }
+                    dashboard.socket.send(JSON.stringify({ type: 'creds_set', exchange_type, api_key, api_secret, passphrase, testnet, is_active, extra }));
                     closeConfigModal();
                     return;
                 }
@@ -1419,29 +1637,68 @@
             const modal = overlay.querySelector('.modal');
             if (modal) { modal.classList.remove('animate-in'); requestAnimationFrame(() => { modal.classList.add('animate-in'); }); }
             overlay.addEventListener('click', (e) => { if (e.target === overlay) closeConfigModal(); }, { once: true });
-            const arr = window.latestCreds || [];
-            const it = arr.find(x => x && x.exchange_type === exchangeType) || arr[0] || { exchange_type: 'okx', api_key: '', api_secret: '', passphrase: '', testnet: 'false', is_demo: 'true' };
+            const it = { exchange_type: exchangeType || 'okx', api_key: '', api_secret: '', passphrase: '', testnet: 'false', is_active: 'false', extra: {} };
             const row2 = document.createElement('div'); row2.className = 'form-row';
             const l2 = document.createElement('label'); l2.textContent = '交易所';
-            const s2 = document.createElement('select'); s2.id = 'creds_exchange';
-            ['okx','binance','bybit'].forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; s2.appendChild(o); });
-            s2.value = (it.exchange_type || 'okx'); row2.appendChild(l2); row2.appendChild(s2); container.appendChild(row2);
+            let exchList = ['okx','binance','bybit'];
+            try { const raw = (document.body.dataset && document.body.dataset.ccxtExchanges) ? document.body.dataset.ccxtExchanges : '[]'; const arr = JSON.parse(raw); if (Array.isArray(arr) && arr.length) exchList = arr; } catch (_) {}
+            const rightCol = document.createElement('div'); rightCol.className = 'select-wrap';
+            const selectedDisplay = document.createElement('input'); selectedDisplay.id = 'creds_exchange_input'; selectedDisplay.type = 'text'; selectedDisplay.readOnly = true; selectedDisplay.value = (it.exchange_type || 'okx'); selectedDisplay.className = 'dropdown-input';
+            const panel = document.createElement('div'); panel.className = 'dropdown-panel';
+            try { const mh = modal ? modal.clientHeight : 0; if (mh > 0) { const h = Math.floor(mh * 0.8); panel.style.maxHeight = h + 'px'; panel.style.height = h + 'px'; } } catch (_) {}
+            exchList.forEach(v => { const item = document.createElement('div'); item.className = 'dropdown-item'; item.textContent = v; item.addEventListener('click', function(){ selectedDisplay.value = v; panel.style.display = 'none'; try { requestByExchange(v); } catch(_){} }); panel.appendChild(item); });
+            selectedDisplay.addEventListener('click', function(){ panel.style.display = 'block'; });
+            selectedDisplay.addEventListener('focus', function(){ panel.style.display = 'block'; });
+            document.addEventListener('click', function(e){ try { if (!rightCol.contains(e.target)) panel.style.display = 'none'; } catch(_){} });
+            rightCol.appendChild(selectedDisplay);
+            rightCol.appendChild(panel);
+            row2.appendChild(l2); row2.appendChild(rightCol); container.appendChild(row2);
             const row3 = document.createElement('div'); row3.className = 'form-row';
             const l3 = document.createElement('label'); l3.textContent = 'API Key';
             const i3 = document.createElement('input'); i3.id = 'creds_key'; i3.type = 'text'; i3.value = it.api_key || ''; row3.appendChild(l3); row3.appendChild(i3); container.appendChild(row3);
             const row4 = document.createElement('div'); row4.className = 'form-row';
             const l4 = document.createElement('label'); l4.textContent = 'API Secret';
-            const i4 = document.createElement('input'); i4.id = 'creds_secret'; i4.type = 'password'; i4.value = it.api_secret || ''; row4.appendChild(l4); row4.appendChild(i4); container.appendChild(row4);
+            const i4 = document.createElement('input'); i4.id = 'creds_secret'; i4.type = 'text'; i4.value = it.api_secret || ''; row4.appendChild(l4); row4.appendChild(i4); container.appendChild(row4);
             const row5 = document.createElement('div'); row5.className = 'form-row';
             const l5 = document.createElement('label'); l5.textContent = 'Passphrase';
             const i5 = document.createElement('input'); i5.id = 'creds_pass'; i5.type = 'text'; i5.value = it.passphrase || ''; row5.appendChild(l5); row5.appendChild(i5); container.appendChild(row5);
             const row6 = document.createElement('div'); row6.className = 'form-row';
             const l6 = document.createElement('label'); l6.textContent = '测试网';
-            const s6 = document.createElement('select'); s6.id = 'creds_testnet'; ['true','false'].forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; s6.appendChild(o); }); s6.value = String(it.testnet || 'false').toLowerCase() === 'true' ? 'true' : 'false'; row6.appendChild(l6); row6.appendChild(s6); container.appendChild(row6);
+            const rightCol2 = document.createElement('div'); rightCol2.className = 'select-wrap';
+            const selectedTest = document.createElement('input'); selectedTest.id = 'creds_testnet_input'; selectedTest.type = 'text'; selectedTest.readOnly = true; selectedTest.value = (String(it.testnet || 'false').toLowerCase() === 'true' ? 'true' : 'false');
+            const panel2 = document.createElement('div'); panel2.className = 'dropdown-panel';
+            try { const mh = modal ? modal.clientHeight : 0; if (mh > 0) { const h = Math.floor(mh * 0.8); panel2.style.maxHeight = h + 'px'; } } catch (_) {}
+            ['true','false'].forEach(v => { const item = document.createElement('div'); item.className = 'dropdown-item'; item.textContent = v; item.addEventListener('click', function(){ selectedTest.value = v; panel2.style.display = 'none'; }); panel2.appendChild(item); });
+            selectedTest.addEventListener('click', function(){ panel2.style.display = 'block'; });
+            selectedTest.addEventListener('focus', function(){ panel2.style.display = 'block'; });
+            document.addEventListener('click', function(e){ try { if (!rightCol2.contains(e.target)) panel2.style.display = 'none'; } catch(_){} });
+            rightCol2.appendChild(selectedTest);
+            rightCol2.appendChild(panel2);
+            row6.appendChild(l6); row6.appendChild(rightCol2); container.appendChild(row6);
+
             const row7 = document.createElement('div'); row7.className = 'form-row';
-            const l7 = document.createElement('label'); l7.textContent = '演示模式';
-            const s7 = document.createElement('select'); s7.id = 'creds_demo'; ['true','false'].forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; s7.appendChild(o); }); s7.value = String(it.is_demo || 'true').toLowerCase() === 'true' ? 'true' : 'false'; row7.appendChild(l7); row7.appendChild(s7); container.appendChild(row7);
+            const l7 = document.createElement('label'); l7.textContent = '激活';
+            const rightCol3 = document.createElement('div'); rightCol3.className = 'select-wrap';
+            const selectedAct = document.createElement('input'); selectedAct.id = 'creds_active_input'; selectedAct.type = 'text'; selectedAct.readOnly = true; selectedAct.value = (String(it.is_active || 'false').toLowerCase() === 'true' ? 'true' : 'false');
+            const panel3 = document.createElement('div'); panel3.className = 'dropdown-panel';
+            try { const mh = modal ? modal.clientHeight : 0; if (mh > 0) { const h = Math.floor(mh * 0.8); panel3.style.maxHeight = h + 'px'; } } catch (_) {}
+            ['true','false'].forEach(v => { const item = document.createElement('div'); item.className = 'dropdown-item'; item.textContent = v; item.addEventListener('click', function(){ selectedAct.value = v; panel3.style.display = 'none'; }); panel3.appendChild(item); });
+            selectedAct.addEventListener('click', function(){ panel3.style.display = 'block'; });
+            selectedAct.addEventListener('focus', function(){ panel3.style.display = 'block'; });
+            document.addEventListener('click', function(e){ try { if (!rightCol3.contains(e.target)) panel3.style.display = 'none'; } catch(_){} });
+            rightCol3.appendChild(selectedAct);
+            rightCol3.appendChild(panel3);
+            row7.appendChild(l7); row7.appendChild(rightCol3); container.appendChild(row7);
+
+            const row8 = document.createElement('div'); row8.className = 'form-row';
+            const l8 = document.createElement('label'); l8.textContent = '额外配置(JSON)';
+            const t8 = document.createElement('textarea'); t8.id = 'creds_extra'; t8.rows = 6; t8.style.width = '100%';
+            try { t8.value = JSON.stringify(it.extra || {}, null, 2); } catch (_) { t8.value = '{}'; }
+            row8.appendChild(l8); row8.appendChild(t8); container.appendChild(row8);
+            const requestByExchange = (ex) => { try { if (!dashboard || !dashboard.socket || dashboard.socket.readyState !== WebSocket.OPEN) return; dashboard.socket.send(JSON.stringify({ type: 'creds_get', exchange_type: ex })); } catch (_) {} };
+            requestByExchange(selectedDisplay.value);
             window.configModalMode = 'creds';
+            try { document.body.dataset.configMode = 'creds'; } catch (_) {}
         }
 
         // 前端乐观更新：根据提交的 updates 立即更新“指标参数”chips
@@ -1683,22 +1940,14 @@
             }
         }
 
-        function tfLabel(tf) {
-            const map = { '1m': '1分钟', '5m': '5分钟', '15m': '15分钟', '1h': '1小时', '4h': '4小时' };
-            return map[tf] || tf;
-        }
+        
 
         function ensureDefaultTfOptions() {
             try {
-                const sel = document.getElementById('tfSelect');
-                if (!sel) return;
-                if (sel.options.length === 0) {
-                    ['1m','5m','15m','1h','4h'].forEach(o => {
-                        const opt = document.createElement('option');
-                        opt.value = o; opt.textContent = tfLabel(o);
-                        sel.appendChild(opt);
-                    });
-                }
+                const opts = window.latestTimeframeOptions || ['1m','5m','15m','1h','4h'];
+                const curEl = document.getElementById('currentTimeframe');
+                const cur = curEl ? String(curEl.textContent || '1m') : '1m';
+                renderTfDropdown(opts, cur);
             } catch (_) {}
         }
 
@@ -1717,22 +1966,7 @@
             } catch (_) {}
         }
 
-        function updateTimeframe() {
-            try {
-                if (!dashboard || !dashboard.socket || dashboard.socket.readyState !== WebSocket.OPEN) {
-                    dashboard && dashboard.logEvent('系统', '未连接监控服务，无法更新周期', 'warning');
-                    return;
-                }
-                const sel = document.getElementById('tfSelect');
-                const tf = sel.value;
-                window.prevTf = sel.value;
-                sel.disabled = true;
-                dashboard.socket.send(JSON.stringify({ type: 'timeframe', timeframe: tf }));
-                dashboard.logEvent('系统', `已发送周期更新: ${tf}`, 'info');
-            } catch (e) {
-                dashboard.logEvent('错误', `发送周期更新失败: ${e.message}`, 'error');
-            }
-        }
+        function updateTimeframe() { updateTimeframeCustom(); }
 
         function startAutoTrading() {
             sendControl('start');
@@ -1869,7 +2103,83 @@
                 order.forEach(id => { const node = map[id]; if (node) container.appendChild(node); });
             } catch (_) {}
         }
+
+        function applyCardOrderFromLayouts(layouts) {
+            try {
+                const list = Array.isArray(layouts) ? layouts : [];
+                const main = list.find(x => x && x.container === 'main');
+                const settings = list.find(x => x && x.container === 'settings');
+                const mainContainer = document.querySelectorAll('.dashboard')[0];
+                const settingsContainer = document.querySelectorAll('.dashboard')[1];
+                const apply = (container, order) => {
+                    if (!container || !Array.isArray(order) || !order.length) return;
+                    const map = {};
+                    container.querySelectorAll('.card').forEach(c => { const id = c.getAttribute('data-card-id'); if (id) map[id] = c; });
+                    order.forEach(id => { const node = map[id]; if (node) container.appendChild(node); });
+                };
+                apply(mainContainer, main ? (main.order || []) : []);
+                apply(settingsContainer, settings ? (settings.order || []) : []);
+            } catch (_) {}
+        }
+
+        function renderTfDropdown(options, current) {
+            try {
+                const input = document.getElementById('tfSelectInput');
+                const panel = document.getElementById('tfSelectPanel');
+                if (!input || !panel) return;
+                panel.innerHTML = '';
+                const opts = Array.isArray(options) && options.length ? options : ['1m','5m','15m','1h','4h'];
+                const cur = current && opts.includes(current) ? current : opts[0];
+                input.value = cur;
+                input.dataset.value = cur;
+                opts.forEach(o => {
+                    const item = document.createElement('div');
+                    item.className = 'dropdown-item';
+                    item.textContent = o;
+                    item.addEventListener('click', function(){ input.value = o; input.dataset.value = o; panel.style.display = 'none'; try { updateTimeframeCustom(); } catch(_){} });
+                    panel.appendChild(item);
+                });
+                input.onclick = function(){ panel.style.display = 'block'; };
+                input.onfocus = function(){ panel.style.display = 'block'; };
+                document.addEventListener('click', function(e){ try { const wrap = document.getElementById('tfSelectWrap'); if (!wrap.contains(e.target)) panel.style.display = 'none'; } catch(_){} });
+            } catch (_) {}
+        }
+
+        function updateTimeframeCustom() {
+            try {
+                if (!dashboard || !dashboard.socket || dashboard.socket.readyState !== WebSocket.OPEN) {
+                    dashboard && dashboard.logEvent('系统', '未连接监控服务，无法更新周期', 'warning');
+                    return;
+                }
+                const input = document.getElementById('tfSelectInput');
+                const tf = (input && input.dataset && input.dataset.value) ? input.dataset.value : '1m';
+                dashboard.socket.send(JSON.stringify({ type: 'timeframe', timeframe: tf }));
+                dashboard.logEvent('系统', `已发送周期更新: ${tf}`, 'info');
+            } catch (e) {
+                dashboard.logEvent('错误', `发送周期更新失败: ${e.message}`, 'error');
+            }
+        }
+
+        function adjustCredsListHeight() {
+            try {
+                const card = document.querySelector('.card[data-card-id="card-creds"]');
+                const wrap = document.getElementById('credsListWrap');
+                if (!card || !wrap) return;
+                const actions = card.querySelector('.param-actions');
+                const header = card.querySelector('h3');
+                const groupTitle = card.querySelector('.param-group-title');
+                const pad = 40;
+                const actionsH = actions ? actions.offsetHeight : 0;
+                const headerH = header ? header.offsetHeight : 0;
+                const groupH = groupTitle ? groupTitle.offsetHeight : 0;
+                const avail = card.clientHeight - (actionsH + headerH + groupH + pad);
+                wrap.style.height = (avail > 100 ? avail : 100) + 'px';
+                wrap.style.overflowY = 'auto';
+                wrap.style.paddingBottom = (actionsH + 20) + 'px';
+            } catch (_) {}
+        }
+
+        try { window.addEventListener('resize', adjustCredsListHeight); } catch (_) {}
     </script>
     </body>
     </html>
-      

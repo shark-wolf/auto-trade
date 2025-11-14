@@ -3,6 +3,8 @@
 """
 
 import asyncio
+import os
+import json
 import json
 import time
 from datetime import datetime, timedelta
@@ -601,7 +603,8 @@ class MonitoringService:
                     api_secret TEXT,
                     passphrase TEXT,
                     testnet TEXT,
-                    is_demo TEXT,
+                    is_active TEXT,
+                    extra_json TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """
@@ -611,6 +614,10 @@ class MonitoringService:
                 names = {c[1] for c in cols}
                 if "exchange_type" not in names:
                     cursor.execute("ALTER TABLE api_credentials ADD COLUMN exchange_type TEXT")
+                if "is_active" not in names:
+                    cursor.execute("ALTER TABLE api_credentials ADD COLUMN is_active TEXT")
+                if "extra_json" not in names:
+                    cursor.execute("ALTER TABLE api_credentials ADD COLUMN extra_json TEXT")
             except Exception:
                 pass
             try:
@@ -950,249 +957,38 @@ class MonitoringService:
                     continue
 
                 if isinstance(msg, dict) and msg.get("type") == "control":
-                    action = str(msg.get("action", "")).lower()
-                    if action in ("start", "stop"):
-                        # 记录事件
-                        try:
-                            self.log_event(
-                                event_type="system",
-                                level="info",
-                                message=f"收到控制指令: {action}",
-                                data={"source": "dashboard", "action": action}
-                            )
-                        except Exception:
-                            pass
+                    await self._h_control(websocket, msg)
 
                 # 参数更新：允许前端修改策略指标参数
                 elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("params", "update_params"):
-                    strategy = str(msg.get("strategy", "")).strip()
-                    updates = msg.get("updates") or {}
-
-                    try:
-                        # 记录事件
-                        try:
-                            self.log_event(
-                                event_type="system",
-                                level="info",
-                                message=f"收到参数更新: {strategy}",
-                                data={"source": "dashboard", "strategy": strategy, "updates": updates}
-                            )
-                        except Exception:
-                            pass
-
-                        # 回调交易机器人应用参数
-                        if callable(self.params_callback):
-                            result = self.params_callback(strategy, updates)
-                            if asyncio.iscoroutine(result):
-                                await result
-
-                        # 反馈客户端
-                        try:
-                            await websocket.send(json.dumps({
-                                "type": "ack",
-                                "action": "params",
-                                "strategy": strategy,
-                                "status": "ok"
-                            }))
-                        except Exception:
-                            pass
-                    except Exception as e:
-                        logger.error(f"处理参数更新失败: {str(e)}")
-                        try:
-                            await websocket.send(json.dumps({
-                                "type": "ack",
-                                "action": "params",
-                                "strategy": strategy,
-                                "status": "error",
-                                "error": str(e)
-                            }))
-                        except Exception:
-                            pass
+                    await self._h_params(websocket, msg)
 
                 elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("timeframe", "set_timeframe"):
-                    tf = str(msg.get("timeframe", "")).strip()
-                    try:
-                        try:
-                            self.log_event(
-                                event_type="system",
-                                level="info",
-                                message="收到周期更新",
-                                data={"timeframe": tf}
-                            )
-                        except Exception:
-                            pass
-
-                        if callable(self.timeframe_callback):
-                            result = self.timeframe_callback(tf)
-                            if asyncio.iscoroutine(result):
-                                await result
-
-                        try:
-                            await websocket.send(json.dumps({
-                                "type": "ack",
-                                "action": "timeframe",
-                                "status": "ok",
-                                "timeframe": tf
-                            }))
-                        except Exception:
-                            pass
-
-                    except Exception as e:
-                        logger.error(f"处理周期更新失败: {str(e)}")
-                        try:
-                            await websocket.send(json.dumps({
-                                "type": "ack",
-                                "action": "timeframe",
-                                "status": "error",
-                                "error": str(e)
-                            }))
-                        except Exception:
-                            pass
+                    await self._h_timeframe(websocket, msg)
 
                 elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("config_get",):
-                    try:
-                        cursor = self.db_connection.cursor()
-                        items = []
-                        try:
-                            for k, v, lbl in cursor.execute("SELECT key, value, label FROM settings"):
-                                items.append({"key": k, "value": v, "label": lbl})
-                        except Exception:
-                            items = []
-                        layouts = []
-                        try:
-                            for c, ojson in cursor.execute("SELECT container, order_json FROM card_layouts"):
-                                try:
-                                    order = json.loads(ojson)
-                                except Exception:
-                                    order = []
-                                layouts.append({"container": c, "order": order})
-                        except Exception:
-                            layouts = []
-                        creds = []
-                        try:
-                            for et, ak, sk, pp, tn, demo in cursor.execute("SELECT exchange_type, api_key, api_secret, passphrase, testnet, is_demo FROM api_credentials"):
-                                creds.append({
-                                    "exchange_type": et or "okx",
-                                    "api_key": ak or "",
-                                    "api_secret": sk or "",
-                                    "passphrase": pp or "",
-                                    "testnet": tn or "false",
-                                    "is_demo": demo or "true",
-                                })
-                        except Exception:
-                            creds = []
-                        await websocket.send(json.dumps({"type": "config", "settings": items, "layouts": layouts, "creds": creds}))
-                    except Exception as e:
-                        try:
-                            await websocket.send(json.dumps({"type": "ack", "action": "config_get", "status": "error", "error": str(e)}))
-                        except Exception:
-                            pass
+                    await self._h_config_get(websocket, msg)
                 elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("config_set",):
-                    try:
-                        k = msg.get("key")
-                        v = msg.get("value")
-                        lbl = msg.get("label")
-                        ok = True
-                        if k is not None:
-                            ok = bool(self.set_setting(str(k), str(v), str(lbl) if lbl is not None else None))
-                        await websocket.send(json.dumps({"type": "ack", "action": "config_set", "status": "ok" if ok else "error"}))
-                    except Exception as e:
-                        try:
-                            await websocket.send(json.dumps({"type": "ack", "action": "config_set", "status": "error", "error": str(e)}))
-                        except Exception:
-                            pass
+                    await self._h_config_set(websocket, msg)
                 elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("layout_set",):
-                    try:
-                        container = str(msg.get("container", ""))
-                        order = msg.get("order")
-                        if not container or not isinstance(order, list):
-                            await websocket.send(json.dumps({"type": "ack", "action": "layout_set", "status": "error", "error": "参数不合法"}))
-                            return
-                        ojson = json.dumps(order, ensure_ascii=False)
-                        cursor = self.db_connection.cursor()
-                        cursor.execute(
-                            "INSERT INTO card_layouts(container, order_json, updated_at) VALUES(?, ?, CURRENT_TIMESTAMP) ON CONFLICT(container) DO UPDATE SET order_json=excluded.order_json, updated_at=excluded.updated_at",
-                            (container, ojson)
-                        )
-                        self.db_connection.commit()
-                        await websocket.send(json.dumps({"type": "ack", "action": "layout_set", "status": "ok"}))
-                    except Exception as e:
-                        try:
-                            await websocket.send(json.dumps({"type": "ack", "action": "layout_set", "status": "error", "error": str(e)}))
-                        except Exception:
-                            pass
+                    await self._h_layout_set(websocket, msg)
                 elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("creds_set",):
-                    try:
-                        exchange_type = str(msg.get("exchange_type", "okx")).strip().lower()
-                        api_key = str(msg.get("api_key", ""))
-                        api_secret = str(msg.get("api_secret", ""))
-                        passphrase = str(msg.get("passphrase", ""))
-                        testnet = "true" if str(msg.get("testnet", "false")).lower() == "true" else "false"
-                        is_demo = "true" if str(msg.get("is_demo", "true")).lower() == "true" else "false"
-                        if not exchange_type:
-                            await websocket.send(json.dumps({"type": "ack", "action": "creds_set", "status": "error", "error": "交易所类型不能为空"}))
-                            return
-                        cursor = self.db_connection.cursor()
-                        cursor.execute(
-                            "INSERT INTO api_credentials(exchange_type, api_key, api_secret, passphrase, testnet, is_demo, updated_at) VALUES(?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(exchange_type) DO UPDATE SET api_key=excluded.api_key, api_secret=excluded.api_secret, passphrase=excluded.passphrase, testnet=excluded.testnet, is_demo=excluded.is_demo, updated_at=excluded.updated_at",
-                            (exchange_type, api_key, api_secret, passphrase, testnet, is_demo)
-                        )
-                        self.db_connection.commit()
-                        try:
-                            if callable(self.creds_callback):
-                                payload = {"exchange_type": exchange_type, "api_key": api_key, "api_secret": api_secret, "passphrase": passphrase, "testnet": testnet, "is_demo": is_demo}
-                                r = self.creds_callback(payload)
-                                if asyncio.iscoroutine(r):
-                                    await r
-                        except Exception:
-                            pass
-                        await websocket.send(json.dumps({"type": "ack", "action": "creds_set", "status": "ok"}))
-                    except Exception as e:
-                        try:
-                            await websocket.send(json.dumps({"type": "ack", "action": "creds_set", "status": "error", "error": str(e)}))
-                        except Exception:
-                            pass
+                    await self._h_creds_set(websocket, msg)
                 elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("creds_get",):
-                    try:
-                        cursor = self.db_connection.cursor()
-                        rows = cursor.execute("SELECT exchange_type, api_key, api_secret, passphrase, testnet, is_demo FROM api_credentials").fetchall()
-                        out = []
-                        for et, ak, sk, pp, tn, demo in rows:
-                            out.append({
-                                "exchange_type": et or "okx",
-                                "api_key": ak or "",
-                                "api_secret": sk or "",
-                                "passphrase": pp or "",
-                                "testnet": tn or "false",
-                                "is_demo": demo or "true",
-                            })
-                        await websocket.send(json.dumps({"type": "creds", "items": out}))
-                    except Exception as e:
-                        try:
-                            await websocket.send(json.dumps({"type": "ack", "action": "creds_get", "status": "error", "error": str(e)}))
-                        except Exception:
-                            pass
+                    await self._h_creds_get(websocket, msg)
                 else:
-                    action = str(msg.get("action", "")).lower()
-                    try:
-                        if callable(self.control_callback):
-                            await self.control_callback(action)
-                    except Exception as e:
-                        logger.error(f"执行控制回调失败: {str(e)}")
-                    # 反馈客户端
-                    try:
-                        await websocket.send(json.dumps({
-                            "type": "ack",
-                            "action": action,
-                            "status": "ok"
-                        }))
-                    except Exception:
-                        pass
+                    await self._h_action_ack(websocket, msg)
 
         except websockets.exceptions.ConnectionClosed:
             logger.info(f"WebSocket客户端断开连接: {getattr(websocket, 'remote_address', '')}")
         except Exception as e:
-            logger.error(f"WebSocket客户端错误: {str(e)}")
+            try:
+                if os.getenv("DEV_MODE", "false").lower() == "true":
+                    logger.exception("WebSocket客户端错误")
+                else:
+                    logger.error(f"WebSocket客户端错误: {str(e)}")
+            except Exception:
+                pass
         finally:
             # 停止发送循环
             try:
@@ -1255,7 +1051,298 @@ class MonitoringService:
             
         except Exception:
             pass
-        await websocket.send(json.dumps(dashboard_data))
+        await self._send_json(websocket, dashboard_data)
+
+    def _is_dev(self):
+        return str(os.getenv("DEV_MODE", "false")).lower() == "true"
+
+    async def _send_json(self, websocket, payload):
+        try:
+            if self._is_dev():
+                try:
+                    obj = payload if isinstance(payload, (dict, list)) else json.loads(payload)
+                except Exception:
+                    obj = payload
+                try:
+                    addr = getattr(websocket, 'remote_address', '')
+                    logger.info(f"WS send -> {addr}: {obj}")
+                except Exception:
+                    logger.info(f"WS send: {obj}")
+        except Exception:
+            pass
+        if isinstance(payload, (dict, list)):
+            await websocket.send(json.dumps(payload))
+        else:
+            await websocket.send(payload)
+
+    def _normalize_bool(self, val):
+        return "true" if str(val).lower() == "true" else "false"
+
+    def _parse_config_payload(self, msg):
+        k = msg.get("key")
+        v = msg.get("value")
+        lbl = msg.get("label")
+        safe = {"key": str(k or ""), "value": str(v or ""), "label": (str(lbl) if lbl is not None else None)}
+        return safe
+
+    def _parse_creds_payload(self, msg):
+        ex = str(msg.get("exchange_type", "okx")).strip().lower()
+        ak = str(msg.get("api_key", ""))
+        sk = str(msg.get("api_secret", ""))
+        pp = str(msg.get("passphrase", ""))
+        tn = self._normalize_bool(msg.get("testnet", "false"))
+        ia = self._normalize_bool(msg.get("is_active", "false"))
+        extra = msg.get("extra")
+        ej = None
+        try:
+            ej = json.dumps(extra, ensure_ascii=False) if isinstance(extra, dict) else None
+        except Exception:
+            ej = None
+        try:
+            import ccxt
+            if ex not in getattr(ccxt, 'exchanges', []):
+                raise ValueError("不支持的交易所")
+        except Exception:
+            pass
+        return {"exchange_type": ex, "api_key": ak, "api_secret": sk, "passphrase": pp, "testnet": tn, "is_active": ia, "extra_json": ej, "extra": (extra if isinstance(extra, dict) else {})}
+
+    def _default_creds_for_exchange(self, ex):
+        m = {
+            "okx": {"passphrase": "", "extra": {"defaultType": "swap"}},
+            "binance": {"passphrase": "", "extra": {"defaultType": "future"}},
+            "bybit": {"passphrase": "", "extra": {"defaultType": "swap"}},
+        }
+        return m.get(ex, {"passphrase": "", "extra": {}})
+
+    def _build_creds_items(self, rows):
+        out = []
+        for et, ak, sk, pp, tn, ia, ej in rows:
+            try:
+                extra = json.loads(ej) if (ej or '').strip() else {}
+            except Exception:
+                extra = {}
+            out.append({
+                "exchange_type": et or "okx",
+                "api_key": ak or "",
+                "api_secret": sk or "",
+                "passphrase": pp or "",
+                "testnet": tn or "false",
+                "is_active": ia or "false",
+                "extra": extra,
+            })
+        return out
+
+    def _list_ccxt_exchanges(self):
+        try:
+            import ccxt
+            return list(getattr(ccxt, 'exchanges', []))
+        except Exception:
+            return ['okx','binance','bybit']
+
+    async def _h_control(self, websocket, msg):
+        action = str(msg.get("action", "")).lower()
+        try:
+            self.log_event(event_type="system", level="info", message=f"收到控制指令: {action}", data={"source": "dashboard", "action": action})
+        except Exception:
+            pass
+        try:
+            if callable(self.control_callback):
+                r = self.control_callback(action)
+                if asyncio.iscoroutine(r):
+                    await r
+        except Exception:
+            pass
+        try:
+            await self._send_json(websocket, {"type": "ack", "action": action, "status": "ok"})
+        except Exception:
+            pass
+
+    async def _h_params(self, websocket, msg):
+        strategy = str(msg.get("strategy", "")).strip()
+        updates = msg.get("updates") or {}
+        try:
+            self.log_event(event_type="system", level="info", message=f"收到参数更新: {strategy}", data={"source": "dashboard", "strategy": strategy, "updates": updates})
+        except Exception:
+            pass
+        try:
+            if callable(self.params_callback):
+                r = self.params_callback(strategy, updates)
+                if asyncio.iscoroutine(r):
+                    await r
+            await self._send_json(websocket, {"type": "ack", "action": "params", "strategy": strategy, "status": "ok"})
+        except Exception as e:
+            try:
+                await self._send_json(websocket, {"type": "ack", "action": "params", "strategy": strategy, "status": "error", "error": str(e)})
+            except Exception:
+                pass
+
+    async def _h_timeframe(self, websocket, msg):
+        tf = str(msg.get("timeframe", "")).strip()
+        try:
+            self.log_event(event_type="system", level="info", message="收到周期更新", data={"timeframe": tf})
+        except Exception:
+            pass
+        try:
+            if callable(self.timeframe_callback):
+                r = self.timeframe_callback(tf)
+                if asyncio.iscoroutine(r):
+                    await r
+            await self._send_json(websocket, {"type": "ack", "action": "timeframe", "status": "ok", "timeframe": tf})
+        except Exception as e:
+            try:
+                await self._send_json(websocket, {"type": "ack", "action": "timeframe", "status": "error", "error": str(e)})
+            except Exception:
+                pass
+
+    async def _h_config_get(self, websocket, msg):
+        try:
+            cursor = self.db_connection.cursor()
+            items = []
+            try:
+                for k, v, lbl in cursor.execute("SELECT key, value, label FROM settings"):
+                    items.append({"key": k, "value": v, "label": lbl})
+            except Exception:
+                items = []
+            layouts = []
+            try:
+                for c, ojson in cursor.execute("SELECT container, order_json FROM card_layouts"):
+                    try:
+                        order = json.loads(ojson)
+                    except Exception:
+                        order = []
+                    layouts.append({"container": c, "order": order})
+            except Exception:
+                layouts = []
+            rows = cursor.execute("SELECT exchange_type, api_key, api_secret, passphrase, testnet, is_active, extra_json FROM api_credentials").fetchall()
+            creds = self._build_creds_items(rows)
+            cur_ex = str((self.config or {}).get("exchange_type") or "")
+            ccxt_exchanges = self._list_ccxt_exchanges()
+            dev_mode = os.getenv("DEV_MODE", "false")
+            await self._send_json(websocket, {"type": "config", "settings": items, "layouts": layouts, "creds": creds, "current_exchange_type": cur_ex, "ccxt_exchanges": ccxt_exchanges, "dev_mode": dev_mode})
+        except Exception as e:
+            try:
+                await self._send_json(websocket, {"type": "ack", "action": "config_get", "status": "error", "error": str(e)})
+            except Exception:
+                pass
+
+    async def _h_config_set(self, websocket, msg):
+        try:
+            payload = self._parse_config_payload(msg)
+            try:
+                if os.getenv("DEV_MODE", "false").lower() == "true":
+                    logger.info(f"WS recv config_set: {payload}")
+            except Exception:
+                pass
+            ok = bool(self.set_setting(payload["key"], payload["value"], payload["label"]))
+            await self._send_json(websocket, {"type": "ack", "action": "config_set", "status": "ok" if ok else "error", "submitted": payload})
+        except Exception as e:
+            try:
+                await self._send_json(websocket, {"type": "ack", "action": "config_set", "status": "error", "error": str(e)})
+            except Exception:
+                pass
+
+    async def _h_layout_set(self, websocket, msg):
+        try:
+            container = str(msg.get("container", ""))
+            order = msg.get("order")
+            if not container or not isinstance(order, list):
+                await self._send_json(websocket, {"type": "ack", "action": "layout_set", "status": "error", "error": "参数不合法"})
+                return
+            ojson = json.dumps(order, ensure_ascii=False)
+            cursor = self.db_connection.cursor()
+            cursor.execute(
+                "INSERT INTO card_layouts(container, order_json, updated_at) VALUES(?, ?, CURRENT_TIMESTAMP) ON CONFLICT(container) DO UPDATE SET order_json=excluded.order_json, updated_at=excluded.updated_at",
+                (container, ojson)
+            )
+            self.db_connection.commit()
+            await self._send_json(websocket, {"type": "ack", "action": "layout_set", "status": "ok"})
+        except Exception as e:
+            try:
+                await self._send_json(websocket, {"type": "ack", "action": "layout_set", "status": "error", "error": str(e)})
+            except Exception:
+                pass
+
+    async def _h_creds_set(self, websocket, msg):
+        try:
+            parsed = self._parse_creds_payload(msg)
+            try:
+                if os.getenv("DEV_MODE", "false").lower() == "true":
+                    logger.info(f"WS recv creds_set: {{'exchange_type': '{parsed['exchange_type']}', 'testnet': '{parsed['testnet']}', 'is_active': '{parsed['is_active']}', 'has_key': '{'true' if parsed['api_key'] else 'false'}'}}")
+            except Exception:
+                pass
+            if not parsed["exchange_type"]:
+                await self._send_json(websocket, {"type": "ack", "action": "creds_set", "status": "error", "error": "交易所类型不能为空"})
+                return
+            cursor = self.db_connection.cursor()
+            if parsed["is_active"] == "true":
+                cursor.execute("UPDATE api_credentials SET is_active='false' WHERE is_active='true'")
+            cursor.execute(
+                "INSERT INTO api_credentials(exchange_type, api_key, api_secret, passphrase, testnet, is_active, extra_json, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(exchange_type) DO UPDATE SET api_key=excluded.api_key, api_secret=excluded.api_secret, passphrase=excluded.passphrase, testnet=excluded.testnet, is_active=excluded.is_active, extra_json=excluded.extra_json, updated_at=excluded.updated_at",
+                (parsed["exchange_type"], parsed["api_key"], parsed["api_secret"], parsed["passphrase"], parsed["testnet"], parsed["is_active"], parsed["extra_json"])
+            )
+            self.db_connection.commit()
+            try:
+                if callable(self.creds_callback):
+                    payload = {"exchange_type": parsed["exchange_type"], "api_key": parsed["api_key"], "api_secret": parsed["api_secret"], "passphrase": parsed["passphrase"], "testnet": parsed["testnet"], "is_active": parsed["is_active"], "extra": parsed["extra"]}
+                    r = self.creds_callback(payload)
+                    if asyncio.iscoroutine(r):
+                        await r
+            except Exception:
+                pass
+            try:
+                safe = {"exchange_type": parsed["exchange_type"], "testnet": parsed["testnet"], "is_active": parsed["is_active"], "has_key": "true" if parsed["api_key"] else "false"}
+            except Exception:
+                safe = {"exchange_type": parsed["exchange_type"], "testnet": parsed["testnet"], "is_active": parsed["is_active"]}
+            await self._send_json(websocket, {"type": "ack", "action": "creds_set", "status": "ok", "submitted": safe})
+            try:
+                rows = cursor.execute("SELECT exchange_type, api_key, api_secret, passphrase, testnet, is_active, extra_json FROM api_credentials").fetchall()
+                out = self._build_creds_items(rows)
+                await self._send_json(websocket, {"type": "creds", "items": out})
+            except Exception:
+                pass
+        except Exception as e:
+            try:
+                await self._send_json(websocket, {"type": "ack", "action": "creds_set", "status": "error", "error": str(e)})
+            except Exception:
+                pass
+
+    async def _h_creds_get(self, websocket, msg):
+        try:
+            cursor = self.db_connection.cursor()
+            ex = str(msg.get("exchange_type", "")).strip().lower()
+            if ex:
+                rows = cursor.execute("SELECT exchange_type, api_key, api_secret, passphrase, testnet, is_active, extra_json FROM api_credentials WHERE exchange_type = ?", (ex,)).fetchall()
+                if not rows:
+                    d = self._default_creds_for_exchange(ex)
+                    cursor.execute(
+                        "INSERT INTO api_credentials(exchange_type, api_key, api_secret, passphrase, testnet, is_active, extra_json, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                        (ex, "", "", d.get("passphrase", ""), "false", "false", json.dumps(d.get("extra", {}), ensure_ascii=False))
+                    )
+                    self.db_connection.commit()
+                    rows = cursor.execute("SELECT exchange_type, api_key, api_secret, passphrase, testnet, is_active, extra_json FROM api_credentials WHERE exchange_type = ?", (ex,)).fetchall()
+            else:
+                rows = cursor.execute("SELECT exchange_type, api_key, api_secret, passphrase, testnet, is_active, extra_json FROM api_credentials").fetchall()
+            out = self._build_creds_items(rows)
+            await self._send_json(websocket, {"type": "creds", "items": out})
+        except Exception as e:
+            try:
+                await self._send_json(websocket, {"type": "ack", "action": "creds_get", "status": "error", "error": str(e)})
+            except Exception:
+                pass
+
+    async def _h_action_ack(self, websocket, msg):
+        action = str(msg.get("action", "")).lower()
+        try:
+            if callable(self.control_callback):
+                r = self.control_callback(action)
+                if asyncio.iscoroutine(r):
+                    await r
+        except Exception:
+            pass
+        try:
+            await self._send_json(websocket, {"type": "ack", "action": action, "status": "ok"})
+        except Exception:
+            pass
     
     # 公共API方法
     def record_metric(self, metric_name: str, value: float, tags: Dict[str, str] = None):
