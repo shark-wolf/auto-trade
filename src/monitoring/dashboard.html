@@ -1470,6 +1470,7 @@
             overlay.style.display = 'flex';
             const container = document.getElementById('configFormContainer');
             container.innerHTML = '';
+            try { const hdr = overlay.querySelector('.modal-header span'); if (hdr) hdr.textContent = '🛠️ 编辑配置'; } catch (_) {}
             try {
                 const modal = overlay.querySelector('.modal');
                 if (modal) {
@@ -1634,6 +1635,7 @@
             overlay.style.display = 'flex';
             const container = document.getElementById('configFormContainer');
             container.innerHTML = '';
+            try { const hdr = overlay.querySelector('.modal-header span'); if (hdr) hdr.textContent = '🔑 编辑凭据'; } catch (_) {}
             const modal = overlay.querySelector('.modal');
             if (modal) { modal.classList.remove('animate-in'); requestAnimationFrame(() => { modal.classList.add('animate-in'); }); }
             overlay.addEventListener('click', (e) => { if (e.target === overlay) closeConfigModal(); }, { once: true });

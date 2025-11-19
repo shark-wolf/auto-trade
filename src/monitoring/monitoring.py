@@ -1065,9 +1065,17 @@ class MonitoringService:
                     obj = payload
                 try:
                     addr = getattr(websocket, 'remote_address', '')
-                    logger.info(f"WS send -> {addr}: {obj}")
+                    try:
+                        pretty = json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True, default=str)
+                    except Exception:
+                        pretty = str(obj)
+                    logger.info(f"WS send -> {addr}:\n{pretty}")
                 except Exception:
-                    logger.info(f"WS send: {obj}")
+                    try:
+                        pretty = json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True, default=str)
+                    except Exception:
+                        pretty = str(obj)
+                    logger.info(f"WS send:\n{pretty}")
         except Exception:
             pass
         if isinstance(payload, (dict, list)):

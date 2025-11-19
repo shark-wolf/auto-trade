@@ -55,6 +55,8 @@ class TradingBot:
         self.ccxt_poll_task = None
         # 分钟边界对齐：记录最近已处理的K线时间戳（毫秒）
         self.last_processed_candle_ts = None
+        # 交易暂停标记：停止发起新交易，但系统与监控保持运行
+        self.trading_paused = False
         
         # 设置日志
         self._setup_logging()
@@ -594,6 +596,9 @@ class TradingBot:
         
         while self.is_running:
             try:
+                if self.trading_paused:
+                    await asyncio.sleep(3)
+                    continue
                 # 使用最新的1分钟K线驱动策略分析
                 candle_getter = getattr(self.market_data_handler, "get_latest_candle", None)
                 if callable(candle_getter):
@@ -1190,11 +1195,88 @@ class TradingBot:
             if action == 'start':
                 if not self.is_running:
                     await self.start()
+                self.trading_paused = False
+                logger.info("交易已恢复，允许发起新订单")
+                try:
+                    if self.monitoring_service and self.strategy_manager:
+                        active = self.strategy_manager.get_active_strategies()
+                        self.monitoring_service.update_strategy_status({
+                            'active_strategies': active,
+                            'recent_signals': len(self.strategy_manager.get_recent_signals(24)),
+                            'executed_orders': self.order_manager.get_order_summary().get('total_orders', 0) if self.order_manager else 0,
+                            'open_positions': (self.portfolio_manager.get_status().get('position_count', 0) if self.portfolio_manager else 0),
+                            'indicator_params': {},
+                            'indicator_values': {},
+                            'timeframe': self.config.get('trading_timeframe', '1m'),
+                            'current_price': float(self.market_data_handler.get_latest_price(self.config.get("symbol")) or 0.0),
+                            'timeframe_options': (self.ccxt_public.available_timeframes() if getattr(self, 'ccxt_public', None) else None) or ['1m','5m','15m','1h','4h']
+                        })
+                except Exception:
+                    pass
             elif action == 'stop':
-                if self.is_running:
-                    await self.stop()
+                await self.pause_trading(flatten=True)
         except Exception as e:
             logger.error(f"处理监控控制指令失败: {str(e)}")
+
+    async def pause_trading(self, flatten: bool = True):
+        try:
+            self.trading_paused = True
+            logger.info("已暂停交易：不再发起新订单")
+            # 取消所有活动订单
+            try:
+                if self.order_manager and self.order_manager.active_orders:
+                    ids = list(self.order_manager.active_orders.keys())
+                    await self.order_manager.batch_cancel_orders(ids)
+            except Exception:
+                pass
+            # 平掉当前仓位
+            if flatten and self.portfolio_manager:
+                try:
+                    status = self.portfolio_manager.get_status()
+                    positions = status.get('positions') or []
+                    for p in positions:
+                        try:
+                            symbol = str(p.get('symbol') or self.config.get('symbol') or '')
+                            qty = float(p.get('qty') or 0)
+                            if qty <= 0:
+                                continue
+                            price = float(self.market_data_handler.get_latest_price(symbol) or p.get('last_price') or p.get('avg_price') or 0.0)
+                            # 下发平仓市价单（卖出全部持仓）
+                            try:
+                                if self.api_client:
+                                    await self.api_client.place_order(symbol=symbol, side='sell', order_type='market', size=qty, price=None)
+                            except Exception:
+                                pass
+                            # 同步到本地组合
+                            try:
+                                self.portfolio_manager.execute_order(symbol=symbol, qty=int(qty), price=price if price > 0 else (p.get('avg_price') or 0.0), side='sell')
+                            except Exception:
+                                pass
+                        except Exception:
+                            continue
+                    logger.info("当前持仓已尝试全部平仓")
+                except Exception:
+                    pass
+            # 推送状态到监控
+            try:
+                if self.monitoring_service and self.strategy_manager:
+                    active = self.strategy_manager.get_active_strategies()
+                    pf = (self.portfolio_manager.get_status() if self.portfolio_manager else {})
+                    self.monitoring_service.update_strategy_status({
+                        'active_strategies': active,
+                        'recent_signals': len(self.strategy_manager.get_recent_signals(24)),
+                        'executed_orders': self.order_manager.get_order_summary().get('total_orders', 0) if self.order_manager else 0,
+                        'open_positions': int(pf.get('position_count', 0)),
+                        'indicator_params': {},
+                        'indicator_values': {},
+                        'timeframe': self.config.get('trading_timeframe', '1m'),
+                        'current_price': float(self.market_data_handler.get_latest_price(self.config.get("symbol")) or 0.0),
+                        'timeframe_options': (self.ccxt_public.available_timeframes() if getattr(self, 'ccxt_public', None) else None) or ['1m','5m','15m','1h','4h']
+                    })
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"暂停交易失败: {str(e)}")
 
     async def _on_monitoring_params_update(self, strategy: str, updates: Dict[str, Any]):
         """处理来自监控面板的策略参数更新"""
