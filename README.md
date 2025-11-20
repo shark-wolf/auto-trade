@@ -1,88 +1,79 @@
-# Auto Trade (OKX 模拟盘 / 永续合约)
+# 自动交易平台（OKX/CCXT，含监控面板）
 
-一个支持 OKX 模拟交易的自动化交易机器人，内置策略框架、风险管理与监控面板。已适配永续合约（`-SWAP`），提供异步下单接口与系统指标推送。
+一个基于 CCXT 异步接口与合并策略（KDJ+MACD）的自动交易机器人，内置本地监控面板与 WebSocket 推送，支持交易对管理（添加/激活/删除）、风险与组合管理、订单执行与状态追踪。已适配开发模式完整 WS 数据输出，便于调试。
 
-**主要特性**
-- 支持 OKX 模拟交易（`OKX_TESTNET=true`），REST 与 WebSocket。
-- 适配永续合约：当 `instId` 以 `-SWAP` 结尾时自动使用 `tdMode=cross`。
-- 异步交易接口：下单、撤单、订单状态查询均提供 `await` 版本。
-- 策略框架：`ma_cross`、`rsi`、`grid` 等示例策略，可按需启用。
-- 风险与监控：系统资源、交易与风险指标通过 WebSocket 推送到监控面板。
+## 特性
+- CCXT 异步行情/下单，支持 OKX（默认）与多交易所
+- 合并策略 KDJ+MACD：同向共振才买入/卖出；止损/止盈优先
+- 交易对管理：弹窗滚动列表添加、灰星点击激活、红星显示已激活、删除交易对；系统使用激活的交易对进行交易
+- 监控面板：本地 HTML 仪表板，分卡片增量刷新，不整页刷新
+- 开发模式：后端控制台格式化打印所有 WS 下发数据
+- 关闭资源：在停止时显式关闭 CCXT/OKX 连接（`await exchange.close()`）
 
-**目录结构**
-- `src/api/`：OKX 客户端（REST 与 WebSocket）。
-- `src/strategies/`：策略实现与基类。
-- `src/execution/order_manager.py`：订单管理与异步执行。
-- `src/risk/`：风险与投资组合管理。
-- `src/monitoring/`：监控服务与 `dashboard.html` 前端页面。
-- `tests/`：连通性与基本功能测试脚本。
+## 目录结构
+- `main.py` 入口与主流程（启动/停止/交易循环/监控循环/CCXT轮询）
+- `src/api/ccxt_client.py` CCXT 异步客户端适配（行情、下单、撤单、查单、关闭）
+- `src/strategies/kdj_macd_strategy.py` 合并策略实现（KDJ+MACD 共振）
+- `src/execution/order_manager.py` 订单创建、提交、取消、监控
+- `src/risk/portfolio_manager.py` 组合管理（资金、持仓、再平衡）
+- `src/risk/risk_manager.py` 风险指标与约束（单笔/总风险、回撤等）
+- `src/monitoring/monitoring.py` 监控后端（SQLite、WS 服务、消息路由、开发日志）
+- `src/monitoring/dashboard.html` 监控面板（交易对管理、指标卡片、策略状态等）
 
-**环境准备**
-- Python 3.11+，建议使用虚拟环境。
-- 安装依赖：`pip install -r requirements.txt`
-- 本项目已提供 `.gitignore`，会忽略本地缓存、日志、数据库与 `.env`。
 
-**配置说明（.env）**
-- 需在 `.env` 中配置模拟盘密钥：
-  - `OKX_API_KEY=...`
-  - `OKX_SECRET_KEY=...`
-  - `OKX_PASSPHRASE=...`
-  - `OKX_TESTNET=true`
-- 交易标的：
-  - `TRADING_SYMBOL=BTC-USDT-SWAP`（默认已切换为永续合约）
-- 启用策略：
-  - `ENABLED_STRATEGIES=ma_cross,rsi,grid`
-- 风险参数（示例）：
-  - `MAX_DAILY_LOSS=...`（在 `main.py` 中会读取并注入监控数据）
+## 快速开始（Windows）
+- 安装依赖
+  - `python -m venv .venv`
+  - `.\.venv\Scripts\pip install -r requirements.txt`
+- 配置环境变量
+  - 复制 `.env.example` 为 `.env`，根据需要修改（如 `DEV_MODE=true`）
+- 启动
+  - `.\.venv\Scripts\python .\run.py`
+- 访问监控面板
+  - 仪表板：`http://localhost:8000/dashboard.html`
+  - WebSocket：`ws://127.0.0.1:8765`
 
-注意：`.env` 含敏感信息，不要提交到仓库。你可以参考 `.env.example`。
+## 运行与控制
+- 开始/停止
+  - 仪表板顶部按钮：开始自动交易、停止自动交易
+  - 停止为“暂停交易”：不退出系统；取消未成交订单并尝试平掉持仓；不再发起新订单
+- 周期选择
+  - 顶部控制区下拉选择；成功后会更新 `当前周期` 显示
+- 交易对管理
+  - 顶部“⚑ 设置交易对”：弹出框内滚动列表展示交易对
+  - 输入框与“添加”同一行；添加后持久化并刷新列表
+  - 灰色星星点击激活，红色星星为当前激活；仅允许单一激活；激活项置顶显示
+  - 删除按钮（“-”）移除该交易对
+  - 顶部显示“当前交易对”，与卡片最左边对齐
+- 凭据管理
+  - “编辑凭据”弹出框：读取/编辑当前交易所凭据；激活交易所仅一个
 
-**OKX 模拟盘连通性测试**
-- 运行脚本：`python tests/okx_sim_test.py`
-- 脚本会执行：
-  - 余额查询（私有接口）
-  - 行情查询（公共接口）
-  - 下发市价测试单（`symbol=BTC-USDT-SWAP`，`side=buy`，`ordType=market`）
-  - 查询挂单并撤单
-- 若出现 `401 Unauthorized`：检查 `API_KEY/SECRET/PASSPHRASE` 是否正确、是否为模拟环境密钥、权限是否包含交易与读取、是否存在 IP 白名单限制。
+## 策略逻辑（KDJ+MACD）
+- KDJ 与 MACD 在同一确认收盘时同向（BUY/SELL）才发出交易信号
+- 止损/止盈优先于共振逻辑（触发即平仓）
+- 下单方向：BUY → 市价买入；SELL → 市价卖出
+- 订单数量：`position_size / current_price`（从配置读取 `position_size`）
 
-**运行机器人**
-- 启动：`python run.py`（或 `python main.py`，视你的入口而定）
-- 确保 `.env` 已配置且 `OKX_TESTNET=true`。
-- 默认交易标的为 `BTC-USDT-SWAP`，策略启用列表来自 `.env`。
+## 开发模式（建议本地启用）
+- `.env` 设置 `DEV_MODE=true`
+- 后端 `monitoring.py` 在所有下发 WS 数据时打印格式化 JSON（含客户端地址），便于联调与排错
 
-**监控面板**
-- 启动本地服务：在 `src/monitoring` 目录运行 `python -m http.server 8000`
-- 打开：`http://localhost:8000/dashboard.html`
-- 后端会每 5 秒推送一次系统与交易指标，包括：
-  - 系统状态：`cpu_percent`、`memory_percent`、`connections`
-  - 交易指标：成交量、胜率、平均盈亏等（无交易时可能为 0）
-  - 风险指标：`daily_loss_limit`（来自 `.env`）等
+## 资源释放
+- 在停止时显式关闭 CCXT 异步客户端，确保 OKX 等连接正确释放
+- 在 `main.py` 的停止流程中调用：`await self.api_client.close()` / `await self.ccxt_public.close()`
 
-**策略说明**
-- `ma_cross_strategy.py`：均线金叉/死叉示例。
-- `rsi_strategy.py`：RSI 超买超卖示例。
-- `grid_strategy.py`：网格交易示例（合约上使用请谨慎，关注持仓模式与 `reduceOnly` 需求）。
-- 在 `.env` 中通过 `ENABLED_STRATEGIES` 控制启用列表。
+## 注意事项
+- 请不要在生产环境中启用 `DEV_MODE=true`，以避免日志输出包含敏感数据
+- 使用 OKX 需要正确的 `apiKey/secret/passphrase`，并根据需要配置 `options.defaultType='swap'` 或其他类型
+- 仅合约交易对（如 `BTC-USDT-SWAP`）会用于交易；确保已激活的交易对与账户类型匹配
 
-**永续合约要点**
-- 账户持仓模式：
-  - 单向（Net）模式下无需 `posSide`。
-  - 双向（Hedge）模式需指定 `posSide=long|short`。如需支持请在下单调用中补充，我们可快速添加。
-- 平仓控制：如需显式平仓，建议使用 `reduceOnly=true`。目前接口未暴露该字段，如有需求请提出。
+## 常见问题
+- 面板显示“未连接监控服务”
+  - 检查 WS 端口与主机（默认 `ws://127.0.0.1:8765`）
+- 无法下单或报“无法获取当前价格”
+  - 检查 CCXT 轮询是否正常、交易对是否激活、行情是否有最新价
+- 停止后资源未释放
+  - 确认 `CCXTClient.close()` 已调用；日志应显示“交易机器人已停止”
 
-**常见问题**
-- 私有接口 `401 Unauthorized`：优先检查密钥与权限；确保为模拟盘密钥；必要时关闭 IP 白名单测试。
-- 监控数据为 0：在无交易或 demo 模式下部分指标为默认值，正常。
-- `.env` 未生效：确认在运行目录存在 `.env`，或使用 `python-dotenv` 已加载。
-
-**测试与开发**
-- 运行基本测试：`pytest -q`（若你安装了 `pytest`）
-- 连通性测试：`python tests/okx_sim_test.py`
-
-**安全与合规**
-- 不要将 `.env`、日志或本地数据库提交到仓库。
-- 本项目的示例策略与风险参数仅用于演示，真实交易前请进行充分回测与风控评估。
-
-**贡献**
-- 欢迎提交 Issue/PR，或反馈你希望支持的交易参数（如 `posSide`、`reduceOnly`）、更多策略示例与监控指标。
+## 许可证
+- 本项目仅用于学习与研究目的，风险自负。

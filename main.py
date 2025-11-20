@@ -291,6 +291,10 @@ class TradingBot:
                 self.monitoring_service.register_creds_callback(self._on_monitoring_creds_update)
             except Exception:
                 pass
+            try:
+                self.monitoring_service.register_symbols_callback(self._on_monitoring_symbols_update)
+            except Exception:
+                pass
             
             logger.info("交易机器人组件初始化完成")
             
@@ -1360,6 +1364,34 @@ class TradingBot:
                     })
             except Exception:
                 pass
+        except Exception:
+            pass
+
+    async def _on_monitoring_symbols_update(self, payload: Dict[str, Any]):
+        try:
+            sym = str((payload or {}).get("instId") or "").strip()
+            if not sym:
+                return
+            self.config["symbol"] = sym
+            self.last_processed_candle_ts = None
+            try:
+                if self.monitoring_service and self.strategy_manager:
+                    active = self.strategy_manager.get_active_strategies()
+                    pf = (self.portfolio_manager.get_status() if self.portfolio_manager else {})
+                    self.monitoring_service.update_strategy_status({
+                        'active_strategies': active,
+                        'recent_signals': len(self.strategy_manager.get_recent_signals(24)),
+                        'executed_orders': self.order_manager.get_order_summary().get('total_orders', 0) if self.order_manager else 0,
+                        'open_positions': int(pf.get('position_count', 0)),
+                        'indicator_params': {},
+                        'indicator_values': {},
+                        'timeframe': self.config.get('trading_timeframe', '1m'),
+                        'current_price': float(self.market_data_handler.get_latest_price(self.config.get("symbol")) or 0.0),
+                        'timeframe_options': (self.ccxt_public.available_timeframes() if getattr(self, 'ccxt_public', None) else None) or ['1m','5m','15m','1h','4h']
+                    })
+            except Exception:
+                pass
+            logger.info(f"已切换交易对: {sym}")
         except Exception:
             pass
 

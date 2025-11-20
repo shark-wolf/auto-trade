@@ -470,6 +470,7 @@ class MonitoringService:
         self.params_callback = None
         self.timeframe_callback = None
         self.creds_callback = None
+        self.symbols_callback = None
         
         # 数据库连接
         self.db_connection = None
@@ -976,6 +977,10 @@ class MonitoringService:
                     await self._h_creds_set(websocket, msg)
                 elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("creds_get",):
                     await self._h_creds_get(websocket, msg)
+                elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("symbols_get",):
+                    await self._h_symbols_get(websocket, msg)
+                elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("symbols_set",):
+                    await self._h_symbols_set(websocket, msg)
                 else:
                     await self._h_action_ack(websocket, msg)
 
@@ -1351,6 +1356,91 @@ class MonitoringService:
             await self._send_json(websocket, {"type": "ack", "action": action, "status": "ok"})
         except Exception:
             pass
+
+    async def _h_symbols_get(self, websocket, msg):
+        try:
+            cursor = self.db_connection.cursor()
+            val = None
+            try:
+                cursor.execute("SELECT value FROM settings WHERE key = ?", ("symbols",))
+                row = cursor.fetchone()
+                val = row[0] if row else None
+            except Exception:
+                val = None
+            items = []
+            try:
+                items = json.loads(val) if (val or '').strip() else []
+            except Exception:
+                items = []
+            if not items:
+                cur = str((self.config or {}).get("symbol") or "BTC-USDT-SWAP")
+                items = [{"instId": cur, "is_active": True}]
+                try:
+                    self.set_setting("symbols", json.dumps(items, ensure_ascii=False))
+                except Exception:
+                    pass
+            await self._send_json(websocket, {"type": "symbols", "items": items})
+        except Exception as e:
+            try:
+                await self._send_json(websocket, {"type": "ack", "action": "symbols_get", "status": "error", "error": str(e)})
+            except Exception:
+                pass
+
+    async def _h_symbols_set(self, websocket, msg):
+        try:
+            cursor = self.db_connection.cursor()
+            action = str(msg.get("action", "")).lower()
+            inst = str(msg.get("instId", "")).strip()
+            # 读取现有
+            try:
+                cursor.execute("SELECT value FROM settings WHERE key = ?", ("symbols",))
+                row = cursor.fetchone()
+                val = row[0] if row else None
+            except Exception:
+                val = None
+            try:
+                items = json.loads(val) if (val or '').strip() else []
+            except Exception:
+                items = []
+            items = [x for x in items if isinstance(x, dict) and x.get("instId")] 
+            # 处理动作
+            if action == "add":
+                if inst and not any(str(x.get("instId")).lower() == inst.lower() for x in items):
+                    items.append({"instId": inst, "is_active": False})
+            elif action == "activate":
+                if inst:
+                    for x in items:
+                        x["is_active"] = (str(x.get("instId", "")).lower() == inst.lower())
+            elif action == "remove":
+                if inst:
+                    items = [x for x in items if str(x.get("instId", "")).lower() != inst.lower()]
+            # 持久化
+            try:
+                self.set_setting("symbols", json.dumps(items, ensure_ascii=False))
+            except Exception:
+                pass
+            # 更新当前激活交易对到设置与内存
+            try:
+                active = next((x.get("instId") for x in items if x.get("is_active") is True), None)
+                if active:
+                    self.set_setting("symbol", active, None)
+                    self.config["symbol"] = active
+                    try:
+                        if callable(self.symbols_callback):
+                            r = self.symbols_callback({"instId": active})
+                            if asyncio.iscoroutine(r):
+                                await r
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            await self._send_json(websocket, {"type": "ack", "action": "symbols_set", "status": "ok"})
+            await self._send_json(websocket, {"type": "symbols", "items": items})
+        except Exception as e:
+            try:
+                await self._send_json(websocket, {"type": "ack", "action": "symbols_set", "status": "error", "error": str(e)})
+            except Exception:
+                pass
     
     # 公共API方法
     def record_metric(self, metric_name: str, value: float, tags: Dict[str, str] = None):

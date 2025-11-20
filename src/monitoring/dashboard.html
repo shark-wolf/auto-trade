@@ -301,8 +301,8 @@
             background: #fff;
             border-radius: 10px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.22);
-            width: clamp(360px, 80vw, 800px);
-            max-width: calc(100% - 40px);
+            width: 500px;
+            max-width: 500px;
             max-height: 85vh;
             overflow: auto;
             transform: translateY(6px) scale(0.98);
@@ -385,6 +385,10 @@
         }
         .star-badge {
             color: #e74c3c;
+        }
+        .star-badge-inactive {
+            color: #95a5a6;
+            cursor: pointer;
         }
         .param-chips {
             display: flex;
@@ -517,6 +521,10 @@
                 <input id="tfSelectInput" type="text" readonly class="dropdown-input" value="" />
                 <div id="tfSelectPanel" class="dropdown-panel"></div>
             </div>
+            <span style="margin-left:8px"></span>
+            <button class="btn" onclick="openSymbolsModal()">⚑ 设置交易对</button>
+            <span style="margin-left:12px; color:#fff;">当前交易对：</span>
+            <span id="currentSymbolTag" class="param-chip" style="background:#1fb048; border-color:#097e13; color:#e5e7eb; vertical-align:middle">--</span>
         </div>
 
         <div class="dashboard">
@@ -549,18 +557,7 @@
                 </div>
             </div>
             <div class="dashboard">
-                <div class="card card-settings" data-card-id="card-settings">
-                    <h3>🛠️ 配置查看与编辑</h3>
-                    <div style="display:flex; gap:16px; flex-wrap:wrap">
-                        <div style="flex:1; min-width:280px">
-                            <div class="param-group-title">系统设置</div>
-                            <div id="settingsList" class="param-chips"><span class="param-empty">--</span></div>
-                        </div>
-                    </div>
-                    <div class="param-actions fixed-bottom">
-                        <button class="btn" onclick="openSettingsModal()">设置配置</button>
-                    </div>
-                </div>
+                
                 <div class="card" data-card-id="card-creds">
                     <h3>🔐 交易所凭据</h3>
                     <div class="param-group-title">当前凭据</div>
@@ -576,21 +573,29 @@
             <!-- 🧭 指标参数（与策略状态并列） -->
             <div class="card" data-card-id="card-indicators">
                 <h3>🧭 指标参数与当前值</h3>
-                <div class="param-group">
-                    <div class="param-group-title">KDJ 参数</div>
-                    <div class="param-chips" id="kdjParamChips"><span class="param-empty">--</span></div>
-                </div>
-                <div class="param-group">
-                    <div class="param-group-title">MACD 参数</div>
-                    <div class="param-chips" id="macdParamChips"><span class="param-empty">--</span></div>
-                </div>
-                <div class="param-group" style="margin-top:12px">
-                    <div class="param-group-title">KDJ 当前值</div>
-                    <div class="param-chips" id="kdjValueChips"><span class="param-empty">--</span></div>
-                </div>
-                <div class="param-group">
-                    <div class="param-group-title">MACD 当前值</div>
-                    <div class="param-chips" id="macdValueChips"><span class="param-empty">--</span></div>
+                <div id="indicatorsScroll" style="max-height: calc(100% - 120px); overflow-y: auto; padding-right: 4px;">
+                    <div class="param-group">
+                        <div class="param-group-title">当前值</div>
+                        <div class="param-group" style="margin-top:6px">
+                            <div class="param-group-title">KDJ 当前值</div>
+                            <div class="param-chips" id="kdjValueChips"><span class="param-empty">--</span></div>
+                        </div>
+                        <div class="param-group">
+                            <div class="param-group-title">MACD 当前值</div>
+                            <div class="param-chips" id="macdValueChips"><span class="param-empty">--</span></div>
+                        </div>
+                    </div>
+                    <div class="param-group" style="margin-top:12px">
+                        <div class="param-group-title">参数</div>
+                        <div class="param-group" style="margin-top:6px">
+                            <div class="param-group-title">KDJ 参数</div>
+                            <div class="param-chips" id="kdjParamChips"><span class="param-empty">--</span></div>
+                        </div>
+                        <div class="param-group">
+                            <div class="param-group-title">MACD 参数</div>
+                            <div class="param-chips" id="macdParamChips"><span class="param-empty">--</span></div>
+                        </div>
+                    </div>
                 </div>
                 <div class="param-actions fixed-bottom">
                     <button class="btn" onclick="openParamModal()">设置参数</button>
@@ -828,12 +833,17 @@
                             try { console.log('WS recv', data); } catch (_) {}
                             if (data.type === 'config') {
                                 try {
-                                    renderSettings(data.settings || []);
+                                    
                                     renderCreds(data.creds || []);
                                     try { adjustCredsListHeight(); } catch (_) {}
                                     this.logEvent('系统', '配置已刷新', 'success');
                                     try { document.body.dataset.ccxtExchanges = JSON.stringify(Array.isArray(data.ccxt_exchanges) ? data.ccxt_exchanges : []); } catch (_) {}
                                     try { applyCardOrderFromLayouts(data.layouts || []); } catch (_) {}
+                                    try {
+                                        const arr = Array.isArray(data.settings) ? data.settings : [];
+                                        const it = arr.find(x => x && x.key === 'symbol');
+                                        if (it && it.value) updateCurrentSymbolTag(String(it.value));
+                                    } catch (_) {}
                                 } catch (_) {}
                                 return;
                             }
@@ -907,7 +917,7 @@
                             if (data.type === 'ack' && data.action === 'config_set') {
                                 try {
                                     if (data.status === 'ok') {
-                                        fetchConfig();
+                                        
                                         this.logEvent('系统', '配置更新成功', 'success');
                                         try { if (window.pendingModalClose === 'settings') closeConfigModal(); } catch (_) {}
                                     } else {
@@ -921,12 +931,25 @@
                                 try {
                                     if (data.status === 'ok') {
                                         try { if (dashboard && dashboard.socket && dashboard.socket.readyState === WebSocket.OPEN) { dashboard.socket.send(JSON.stringify({ type: 'creds_get' })); } } catch (_) {}
-                                        fetchConfig();
+                                        
                                         this.logEvent('系统', '凭据更新成功', 'success');
                                     } else {
                                         this.logEvent('系统', `凭据更新失败: ${data.error || ''}`, 'error');
                                     }
                                 } catch (_) {}
+                                return;
+                            }
+                            if (data.type === 'symbols') {
+                                try { renderSymbols(Array.isArray(data.items) ? data.items : []); } catch (_) {}
+                                try {
+                                    const items = Array.isArray(data.items) ? data.items : [];
+                                    const act = items.find(x => String(x.is_active || 'false').toLowerCase() === 'true');
+                                    if (act && act.instId) updateCurrentSymbolTag(String(act.instId));
+                                } catch (_) {}
+                                return;
+                            }
+                            if (data.type === 'ack' && data.action === 'symbols_set') {
+                                try { requestSymbols(); } catch (_) {}
                                 return;
                             }
                             // 服务器发送的是完整的仪表板数据，需要解析并更新各个组件
@@ -1470,6 +1493,7 @@
             overlay.style.display = 'flex';
             const container = document.getElementById('configFormContainer');
             container.innerHTML = '';
+            try { const act = overlay.querySelector('.modal-actions'); if (act) act.style.display = 'flex'; } catch (_) {}
             try { const hdr = overlay.querySelector('.modal-header span'); if (hdr) hdr.textContent = '🛠️ 编辑配置'; } catch (_) {}
             try {
                 const modal = overlay.querySelector('.modal');
@@ -1635,6 +1659,7 @@
             overlay.style.display = 'flex';
             const container = document.getElementById('configFormContainer');
             container.innerHTML = '';
+            try { const act = overlay.querySelector('.modal-actions'); if (act) act.style.display = 'flex'; } catch (_) {}
             try { const hdr = overlay.querySelector('.modal-header span'); if (hdr) hdr.textContent = '🔑 编辑凭据'; } catch (_) {}
             const modal = overlay.querySelector('.modal');
             if (modal) { modal.classList.remove('animate-in'); requestAnimationFrame(() => { modal.classList.add('animate-in'); }); }
@@ -1701,6 +1726,97 @@
             requestByExchange(selectedDisplay.value);
             window.configModalMode = 'creds';
             try { document.body.dataset.configMode = 'creds'; } catch (_) {}
+        }
+        
+        function openSymbolsModal() {
+            const overlay = document.getElementById('configModalOverlay');
+            overlay.style.display = 'flex';
+            const container = document.getElementById('configFormContainer');
+            container.innerHTML = '';
+            try { const act = overlay.querySelector('.modal-actions'); if (act) act.style.display = 'none'; } catch (_) {}
+            try { const hdr = overlay.querySelector('.modal-header span'); if (hdr) hdr.textContent = '⚑ 设置交易对'; } catch (_) {}
+            const modal = overlay.querySelector('.modal');
+            if (modal) { modal.classList.remove('animate-in'); requestAnimationFrame(() => { modal.classList.add('animate-in'); }); }
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) closeConfigModal(); }, { once: true });
+            const listWrap = document.createElement('div'); listWrap.id = 'symbolsListWrap'; listWrap.style.maxHeight = '60vh'; listWrap.style.overflowY = 'auto'; listWrap.style.paddingRight = '4px';
+            const list = document.createElement('div'); list.id = 'symbolsList'; list.className = 'param-chips'; list.innerHTML = '<span class="param-empty">--</span>';
+            listWrap.appendChild(list);
+            container.appendChild(listWrap);
+            const formRow = document.createElement('div'); formRow.className = 'form-row';
+            const label = document.createElement('label'); label.textContent = '添加交易对(如: BTC-USDT-SWAP)';
+            const rightCol = document.createElement('div'); rightCol.style.display = 'flex'; rightCol.style.gap = '8px'; rightCol.style.alignItems = 'center';
+            const input = document.createElement('input'); input.id = 'symbolAddInput'; input.type = 'text'; input.placeholder = 'BTC-USDT-SWAP'; input.style.flex = '1';
+            const btnAdd = document.createElement('button'); btnAdd.className = 'btn'; btnAdd.textContent = '添加'; btnAdd.onclick = function(){ try { submitAddSymbol(); } catch(_){} };
+            rightCol.appendChild(input); rightCol.appendChild(btnAdd);
+            formRow.appendChild(label); formRow.appendChild(rightCol); container.appendChild(formRow);
+            try { document.body.dataset.configMode = 'symbols'; } catch (_) {}
+            requestSymbols();
+            try { adjustSymbolsListHeight(); } catch (_) {}
+        }
+
+        function requestSymbols() {
+            try { if (!dashboard || !dashboard.socket || dashboard.socket.readyState !== WebSocket.OPEN) return; dashboard.socket.send(JSON.stringify({ type: 'symbols_get' })); } catch (_) {}
+        }
+        function updateCurrentSymbolTag(name) {
+            try {
+                const el = document.getElementById('currentSymbolTag');
+                if (!el) return;
+                el.innerText = String(name || '--');
+            } catch (_) {}
+        }
+        function submitAddSymbol() {
+            try {
+                const el = document.getElementById('symbolAddInput');
+                const v = el ? String(el.value || '').trim() : '';
+                if (!v) return;
+                if (!dashboard || !dashboard.socket || dashboard.socket.readyState !== WebSocket.OPEN) return;
+                dashboard.socket.send(JSON.stringify({ type: 'symbols_set', action: 'add', instId: v }));
+                el.value = '';
+            } catch (_) {}
+        }
+        function activateSymbol(instId) {
+            try { if (!dashboard || !dashboard.socket || dashboard.socket.readyState !== WebSocket.OPEN) return; dashboard.socket.send(JSON.stringify({ type: 'symbols_set', action: 'activate', instId })); } catch (_) {}
+        }
+        function removeSymbol(instId) {
+            try { if (!dashboard || !dashboard.socket || dashboard.socket.readyState !== WebSocket.OPEN) return; dashboard.socket.send(JSON.stringify({ type: 'symbols_set', action: 'remove', instId })); } catch (_) {}
+        }
+        function renderSymbols(items) {
+            try {
+                const list = document.getElementById('symbolsList');
+                if (!list) return;
+                list.innerHTML = '';
+                let arr = Array.isArray(items) ? items.slice() : [];
+                if (!arr.length) { list.innerHTML = '<span class="param-empty">--</span>'; return; }
+                arr.sort((a,b) => {
+                    const aa = String((a && a.is_active) || 'false').toLowerCase() === 'true';
+                    const bb = String((b && b.is_active) || 'false').toLowerCase() === 'true';
+                    return (aa === bb) ? 0 : (aa ? -1 : 1);
+                });
+                arr.forEach(x => {
+                    const chip = document.createElement('span'); chip.className = 'param-chip';
+                    const name = String(x.instId || '');
+                    const isActive = String(x.is_active || 'false').toLowerCase() === 'true';
+                    const star = isActive ? '<span class="star-badge">★</span>' : `<span class="star-badge-inactive" title="设为激活" onclick="activateSymbol('${name}')">★</span>`;
+                    const btnR = `<button class="btn btn-secondary btn-compact" style="margin-left:6px" title="删除" onclick="removeSymbol('${name}')">-</button>`;
+                    chip.innerHTML = `<span class='chip-key'>${name}</span><span class='chip-value'>${star}${btnR}</span>`;
+                    list.appendChild(chip);
+                });
+                try { adjustSymbolsListHeight(); } catch (_) {}
+            } catch (_) {}
+        }
+
+        function adjustSymbolsListHeight() {
+            try {
+                const overlay = document.getElementById('configModalOverlay');
+                const modal = overlay ? overlay.querySelector('.modal') : null;
+                const wrap = document.getElementById('symbolsListWrap');
+                if (!modal || !wrap) return;
+                const mh = modal.clientHeight || 0;
+                const h = mh > 0 ? Math.floor(mh * 0.6) : 360;
+                wrap.style.maxHeight = h + 'px';
+                wrap.style.overflowY = 'auto';
+                wrap.style.paddingRight = '4px';
+            } catch (_) {}
         }
 
         // 前端乐观更新：根据提交的 updates 立即更新“指标参数”chips
