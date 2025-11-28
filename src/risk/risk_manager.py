@@ -67,6 +67,7 @@ class RiskManager:
         self.max_position_size = config.get("max_position_size", 0.5)
         self.stop_loss_multiplier = config.get("stop_loss_multiplier", 2.0)
         self.take_profit_multiplier = config.get("take_profit_multiplier", 3.0)
+        self.daily_loss_limit_pct = float(config.get("daily_loss_limit_pct", 0.1))
         
         self.account_balance = 0.0
         self.total_risk = 0.0
@@ -266,6 +267,19 @@ class RiskManager:
         else:
             self.daily_pnl[-1]["pnl"] += pnl
             self.daily_pnl[-1]["trades"] += 1
+
+    def is_daily_limit_reached(self) -> bool:
+        try:
+            if not self.daily_pnl:
+                return False
+            last = self.daily_pnl[-1]
+            pnl = float(last.get("pnl", 0.0))
+            if pnl >= 0:
+                return False
+            threshold = float(self.account_balance) * float(self.daily_loss_limit_pct)
+            return abs(pnl) >= threshold and threshold > 0
+        except Exception:
+            return False
     
     def calculate_risk_metrics(self) -> RiskMetrics:
         """计算风险指标"""

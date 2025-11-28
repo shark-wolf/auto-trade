@@ -981,6 +981,10 @@ class MonitoringService:
                     await self._h_symbols_get(websocket, msg)
                 elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("symbols_set",):
                     await self._h_symbols_set(websocket, msg)
+                elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("risk_get",):
+                    await self._h_risk_get(websocket, msg)
+                elif isinstance(msg, dict) and str(msg.get("type", "")).lower() in ("dashboard_get",):
+                    await self._h_dashboard_get(websocket, msg)
                 else:
                     await self._h_action_ack(websocket, msg)
 
@@ -1439,6 +1443,34 @@ class MonitoringService:
         except Exception as e:
             try:
                 await self._send_json(websocket, {"type": "ack", "action": "symbols_set", "status": "error", "error": str(e)})
+            except Exception:
+                pass
+
+    async def _h_risk_get(self, websocket, msg):
+        try:
+            metrics = self._get_risk_metrics()
+            try:
+                metrics["daily_loss_limit_pct"] = float(self.config.get("daily_loss_limit_pct", 0.0))
+            except Exception:
+                metrics["daily_loss_limit_pct"] = 0.0
+            try:
+                metrics["daily_loss_limit"] = float(self.config.get("max_daily_loss", 0.0))
+            except Exception:
+                pass
+        except Exception:
+                pass        
+    async def _h_dashboard_get(self, websocket, msg):
+        try:
+            await self._send_dashboard_once(websocket)
+        except Exception as e:
+            try:
+                await self._send_json(websocket, {"type": "ack", "action": "dashboard_get", "status": "error", "error": str(e)})
+            except Exception:
+                pass
+            await self._send_json(websocket, {"type": "risk", "metrics": metrics})
+        except Exception as e:
+            try:
+                await self._send_json(websocket, {"type": "ack", "action": "risk_get", "status": "error", "error": str(e)})
             except Exception:
                 pass
     

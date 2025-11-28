@@ -217,3 +217,5 @@ class SettingsStore:
             self.conn.close()
         except Exception:
             pass
+
+

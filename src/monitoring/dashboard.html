@@ -277,6 +277,23 @@
             background: rgba(255,255,255,0.92);
         }
 
+        .icon-btn {
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            color: #7f8c8d;
+            font-size: 1rem;
+            padding: 2px 6px;
+        }
+        .icon-btn:hover { color: #2c3e50; }
+
+        .card h3 {
+            margin-top: 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
         .card-settings {
             display: flex;
             flex-direction: column;
@@ -514,7 +531,7 @@
             <button class="btn btn-danger" onclick="clearLogs()">🗑️ 清空日志</button>
             <span style="margin-left:10px"></span>
             <button class="btn" id="btnStart" onclick="startAutoTrading()">▶️ 开始自动交易</button>
-            <button class="btn btn-danger" id="btnStop" onclick="stopAutoTrading()" style="display:none">⏸️ 停止自动交易</button>
+            <button class="btn" id="btnStop" onclick="stopAutoTrading()" style="display:none">⏸️ 停止自动交易</button>
             <span style="margin-left:10px"></span>
             <label style="color:#fff; margin-right:6px;">周期</label>
             <div class="select-wrap" id="tfSelectWrap" style="width:80px; min-width:80px">
@@ -522,7 +539,7 @@
                 <div id="tfSelectPanel" class="dropdown-panel"></div>
             </div>
             <span style="margin-left:8px"></span>
-            <button class="btn" onclick="openSymbolsModal()">⚑ 设置交易对</button>
+            <button class="btn" onclick="openSymbolsModal()" title="">⚑ 设置交易对</button>
             <span style="margin-left:12px; color:#fff;">当前交易对：</span>
             <span id="currentSymbolTag" class="param-chip" style="background:#1fb048; border-color:#097e13; color:#e5e7eb; vertical-align:middle">--</span>
         </div>
@@ -530,7 +547,7 @@
         <div class="dashboard">
                 <!-- 🎯 策略状态（置顶） -->
                 <div class="card" data-card-id="card-strategy">
-                <h3>🎯 策略状态</h3>
+                <h3>🎯 策略状态 <button class="icon-btn" title="刷新" onclick="dashboard.refreshCard('strategy')">🔄 </button></h3>
                 <div class="metric">
                     <span class="metric-label">活跃策略数</span>
                     <span class="metric-value neutral" id="activeStrategies">--</span>
@@ -559,7 +576,7 @@
             <div class="dashboard">
                 
                 <div class="card" data-card-id="card-creds">
-                    <h3>🔐 交易所凭据</h3>
+                    <h3>🔐 交易所凭据 <button class="icon-btn" title="刷新" onclick="dashboard.refreshCard('creds')">🔄</button></h3>
                     <div class="param-group-title">当前凭据</div>
                     <div id="credsListWrap" style="max-height: calc(100% - 120px); overflow-y: auto; padding-right: 4px;">
                         <div id="credsList" class="param-chips"><span class="param-empty">--</span></div>
@@ -572,7 +589,7 @@
 
             <!-- 🧭 指标参数（与策略状态并列） -->
             <div class="card" data-card-id="card-indicators">
-                <h3>🧭 指标参数与当前值</h3>
+                <h3>🧭 指标参数与当前值 <button class="icon-btn" title="刷新" onclick="dashboard.refreshCard('indicators')">🔄</button></h3>
                 <div id="indicatorsScroll" style="max-height: calc(100% - 120px); overflow-y: auto; padding-right: 4px;">
                     <div class="param-group">
                         <div class="param-group-title">当前值</div>
@@ -604,7 +621,7 @@
 
             <!-- 📊 系统状态 -->
             <div class="card" data-card-id="card-system">
-                <h3>📊 系统状态</h3>
+                <h3>📊 系统状态 <button class="icon-btn" title="刷新" onclick="dashboard.refreshCard('system')">🔄</button></h3>
                 <div class="metric">
                     <span class="metric-label">系统运行时间</span>
                     <span class="metric-value neutral" id="uptime">--</span>
@@ -625,7 +642,7 @@
 
             <!-- ⚠️ 风险指标 -->
             <div class="card" data-card-id="card-risk">
-                <h3>⚠️ 风险指标</h3>
+                <h3>⚠️ 风险指标 <button class="icon-btn" title="刷新" onclick="dashboard.refreshCard('risk')">🔄</button></h3>
                 <div class="metric">
                     <span class="metric-label">当前风险敞口</span>
                     <span class="metric-value" id="riskExposure">--</span>
@@ -641,12 +658,16 @@
                 <div class="metric">
                     <span class="metric-label">日亏损限额</span>
                     <span class="metric-value" id="dailyLossLimit">--</span>
+                    <div style="display:inline-flex; gap:6px; align-items:center; margin-left:8px; vertical-align:middle">
+                        <input id="dlLimitPctInput" type="number" inputmode="decimal" step="0.01" min="0" max="100" placeholder="如 5 或 0.05" style="width:120px" onblur="validateNumberInput(this)" />
+                        <button class="btn btn-compact" onclick="submitDailyLossPct()">设置</button>
+                    </div>
                 </div>
             </div>
 
             <!-- 📈 交易统计 -->
             <div class="card" data-card-id="card-stats">
-                <h3>📈 交易统计</h3>
+                <h3>📈 交易统计 <button class="icon-btn" title="刷新" onclick="dashboard.refreshCard('stats')">🔄</button></h3>
                 <div class="metric">
                     <span class="metric-label">总交易次数</span>
                     <span class="metric-value neutral" id="totalTrades">--</span>
@@ -667,7 +688,7 @@
 
             <!-- 💰 资金与持仓 -->
             <div class="card" data-card-id="card-portfolio">
-                <h3>💰 资金与持仓</h3>
+                <h3>💰 资金与持仓 <button class="icon-btn" title="刷新" onclick="dashboard.refreshCard('portfolio')">🔄</button></h3>
                 <div class="metric">
                     <span class="metric-label">总资产</span>
                     <span class="metric-value neutral" id="pfTotalValue">--</span>
@@ -736,14 +757,14 @@
         <!-- 图表区域 -->
         <div class="dashboard">
             <div class="card">
-                <h3>📊 盈亏趋势图</h3>
+                <h3>📊 盈亏趋势图 <button class="icon-btn" title="刷新" onclick="dashboard.refreshCard('pnlChart')">🔄 </button></h3>
                 <div class="chart-container">
                     <canvas id="pnlChart"></canvas>
                 </div>
             </div>
 
             <div class="card">
-                <h3>📈 交易分布图</h3>
+                <h3>📈 交易分布图 <button class="icon-btn" title="刷新" onclick="dashboard.refreshCard('tradeChart')">🔄 </button></h3>
                 <div class="chart-container">
                     <canvas id="tradeChart"></canvas>
                 </div>
@@ -794,9 +815,46 @@
                 this.eventCount = 0;
                 this.maxEvents = 100;
                 
-                this.initializeCharts();
+                this.renderQueue = [];
+                this.rafId = null;
+                this.chartsInitialized = false;
+                this.setupChartLazyObserver();
                 this.connectWebSocket();
                 this.setupEventListeners();
+            }
+
+            enqueueRender(fn) {
+                try {
+                    this.renderQueue.push(fn);
+                    if (!this.rafId) {
+                        this.rafId = requestAnimationFrame(() => {
+                            try {
+                                const batch = this.renderQueue.splice(0, this.renderQueue.length);
+                                for (let i = 0; i < batch.length; i++) { try { batch[i](); } catch (_) {} }
+                            } finally {
+                                this.rafId = null;
+                            }
+                        });
+                    }
+                } catch (_) {}
+            }
+
+            setupChartLazyObserver() {
+                try {
+                    const init = () => { if (!this.chartsInitialized) { this.initializeCharts(); this.chartsInitialized = true; } };
+                    const pnl = document.getElementById('pnlChart');
+                    const trade = document.getElementById('tradeChart');
+                    const targets = [pnl, trade].filter(Boolean);
+                    if (!targets.length) { return; }
+                    if ('IntersectionObserver' in window) {
+                        const obs = new IntersectionObserver((entries) => {
+                            if (entries.some(e => e.isIntersecting)) { obs.disconnect(); init(); }
+                        }, { root: null, threshold: 0.1 });
+                        targets.forEach(t => obs.observe(t));
+                    } else {
+                        init();
+                    }
+                } catch (_) {}
             }
 
             connectWebSocket() {
@@ -815,6 +873,9 @@
                             this.socket.send = (msg) => { try { const obj = typeof msg === 'string' ? JSON.parse(msg) : msg; console.log('WS send', obj); } catch (e) { console.log('WS send raw', msg); } return orig(msg); };
                         } catch (_) {}
                         try { fetchConfig(); } catch (_) {}
+                        try { this.socket.send(JSON.stringify({ type: 'symbols_get' })); } catch (_) {}
+                        try { this.socket.send(JSON.stringify({ type: 'creds_get' })); } catch (_) {}
+                        try { this.socket.send(JSON.stringify({ type: 'risk_get' })); } catch (_) {}
                     };
 
                     this.socket.onclose = () => {
@@ -952,7 +1013,14 @@
                                 try { requestSymbols(); } catch (_) {}
                                 return;
                             }
+                            if (data.type === 'risk') {
+                                try { this.updateRiskMetrics(data.metrics || {}); } catch (_) {}
+                                return;
+                            }
                             // 服务器发送的是完整的仪表板数据，需要解析并更新各个组件
+                            if (data.risk_metrics) {
+                                try { window.lastRiskMetrics = data.risk_metrics; this.updateRiskMetrics(data.risk_metrics); } catch (_) {}
+                            }
                             if (data.system_status) {
                                 this.updateSystemStatus(data.system_status);
                             }
@@ -1049,16 +1117,25 @@
             }
 
             updateRiskMetrics(data) {
-                document.getElementById('riskExposure').textContent = `${(data.risk_exposure * 100).toFixed(1)}%`;
-                document.getElementById('maxDrawdown').textContent = `${(data.max_drawdown * 100).toFixed(1)}%`;
-                document.getElementById('riskRewardRatio').textContent = data.risk_reward_ratio.toFixed(2);
-                document.getElementById('dailyLossLimit').textContent = this.formatCurrency(data.daily_loss_limit);
-
-                // 更新风险敞口颜色
                 const exposureElement = document.getElementById('riskExposure');
                 const drawdownElement = document.getElementById('maxDrawdown');
-                
-                exposureElement.className = `metric-value ${data.risk_exposure > 0.5 ? 'negative' : data.risk_exposure > 0.3 ? 'neutral' : 'positive'}`;
+                const rrEl = document.getElementById('riskRewardRatio');
+                const dlEl = document.getElementById('dailyLossLimit');
+                const exp = Number(data.risk_exposure || 0);
+                exposureElement.textContent = `${(exp * 100).toFixed(1)}%`;
+                drawdownElement.textContent = `${(Number(data.max_drawdown || 0) * 100).toFixed(1)}%`;
+                rrEl.textContent = Number(data.risk_reward_ratio || 0).toFixed(2);
+                let pct = Number(data.daily_loss_limit_pct ?? (document.body.dataset ? document.body.dataset.dlPct : 0));
+                if (!isFinite(pct)) pct = 0;
+                if (pct > 1) pct = pct / 100;
+                const tv = Number(window.latestTotalValue ?? 0);
+                const amt = (pct > 0 && tv > 0) ? (tv * pct) : Number(data.daily_loss_limit || 0);
+                const pctText = pct > 0 ? `${(pct * 100).toFixed(1)}%` : '--';
+                const amtText = this.formatCurrency(amt);
+                dlEl.textContent = `${pctText} (${amtText})`;
+                const inp = document.getElementById('dlLimitPctInput');
+                if (inp && pct > 0) inp.value = (pct * 100).toFixed(2);
+                exposureElement.className = `metric-value ${exp > 0.5 ? 'negative' : exp > 0.3 ? 'neutral' : 'positive'}`;
                 drawdownElement.className = `metric-value negative`;
             }
 
@@ -1152,6 +1229,7 @@
                 const cashRatio = Number(data.cash_ratio ?? 0);
 
                 totalValueEl.textContent = this.formatCurrency(totalValue);
+                try { window.latestTotalValue = totalValue; } catch (_) {}
                 cashEl.textContent = this.formatCurrency(cash);
                 holdingsEl.textContent = this.formatCurrency(holdingsValue);
                 positionCountEl.textContent = positionCount;
@@ -1166,9 +1244,10 @@
 
                 // 更新持仓列表
                 const tbody = document.getElementById('pfPositionsBody');
-                tbody.innerHTML = '';
                 const positions = Array.isArray(data.positions) ? data.positions : [];
-                positions.forEach(p => {
+                const frag = document.createDocumentFragment();
+                for (let i = 0; i < positions.length; i++) {
+                    const p = positions[i];
                     const tr = document.createElement('tr');
                     tr.style.borderBottom = '1px solid #ecf0f1';
                     const pnlClass = (Number(p.unrealized_pnl ?? 0) >= 0) ? 'positive' : 'negative';
@@ -1180,8 +1259,11 @@
                         <td>${this.formatCurrency(Number(p.value ?? 0))}</td>
                         <td class="${pnlClass}">${this.formatCurrency(Number(p.unrealized_pnl ?? 0))}</td>
                     `;
-                    tbody.appendChild(tr);
-                });
+                    frag.appendChild(tr);
+                }
+                tbody.innerHTML = '';
+                tbody.appendChild(frag);
+                try { if (window.lastRiskMetrics) this.updateRiskMetrics(window.lastRiskMetrics); } catch (_) {}
             }
 
             initializeCharts() {
@@ -1254,7 +1336,8 @@
             }
 
             updateCharts(data) {
-                // 更新盈亏趋势图
+                if (!this.charts || !this.charts.pnl || !this.charts.trade) return;
+                
                 if (data.pnl_history && data.pnl_history.length > 0) {
                     const labels = Array.isArray(data.pnl_labels) && data.pnl_labels.length === data.pnl_history.length
                         ? data.pnl_labels
@@ -2298,6 +2381,35 @@
         }
 
         try { window.addEventListener('resize', adjustCredsListHeight); } catch (_) {}
+
+         function submitDailyLossPct() {
+                try {
+                    const el = document.getElementById('dlLimitPctInput');
+                    if (!el) return;
+                    let v = String(el.value || '').trim();
+                    if (!v) return;
+                    let num = Number(v);
+                    if (!isFinite(num)) return;
+                    if (num > 1) num = num / 100; // 支持输入百分数，如 5 → 0.05
+                    num = Math.max(0, Math.min(num, 1));
+                    if (!dashboard || !dashboard.socket || dashboard.socket.readyState !== WebSocket.OPEN) return;
+                    window.pendingModalClose = null;
+                    dashboard.socket.send(JSON.stringify({ type: 'config_set', key: 'daily_loss_limit_pct', value: String(num), label: '日亏损限额(百分比)' }));
+                    try { document.body.dataset.dlPct = String(num); } catch (_) {}
+                } catch (_) {}
+            }
+            function validateNumberInput(el) {
+                try {
+                    let v = String(el.value || '');
+                    v = v.replace(/[^0-9.]/g, '');
+                    const parts = v.split('.');
+                    if (parts.length > 2) {
+                        v = parts[0] + '.' + parts.slice(1).join('').replace(/\./g, '');
+                    }
+                    el.value = v;
+                } catch (_) {}
+            }
     </script>
     </body>
     </html>
+           
